@@ -40,8 +40,8 @@ export default {
         return redirect("/login");
       }
 
-      if ((url.pathname === "/" || url.pathname === "/dashboard") && request.method === "GET") {
-        return htmlResponse(dashboardPage());
+      if ((url.pathname === "/" || url.pathname === "/dashboard" || url.pathname === "/upload") && request.method === "GET") {
+        return htmlResponse(uploadPage());
       }
 
       return htmlResponse(notFoundPage(), 404);
@@ -262,9 +262,9 @@ function loginPage(error?: string): string {
   );
 }
 
-function dashboardPage(): string {
+function uploadPage(): string {
   return layout(
-    "Dashboard",
+    "Upload files",
     `
       <header class="topbar">
         <div>
@@ -279,66 +279,113 @@ function dashboardPage(): string {
       <main class="dashboard-shell">
         <section class="hero-panel">
           <div>
-            <p class="eyebrow">MVP dashboard</p>
-            <h2>Upload exports, preview rows, and catch import issues early.</h2>
-            <p>CSV files are processed in this browser session only. Storage invoice rows are flagged for exclusion and no Sage connection is made yet.</p>
+            <p class="eyebrow">Upload check</p>
+            <h2>Add the export files you have available.</h2>
+            <p>This step only checks file names, file types and file sizes. The app does not read invoice contents yet and does not permanently store files.</p>
           </div>
           <div class="status-stack" aria-label="Current safeguards">
             <span>Private login</span>
-            <span>No permanent storage</span>
-            <span>No Sage API calls</span>
+            <span>Optional files</span>
+            <span>No file storage</span>
           </div>
         </section>
 
-        <section class="workspace-grid">
-          <div class="upload-panel">
-            <h2>CSV uploads</h2>
-            <p>Add removals, deposits, and ad hoc invoice exports. You can select multiple files.</p>
-            <label class="drop-zone" for="csvFiles">
-              <span class="drop-icon" aria-hidden="true">CSV</span>
-              <span>Choose CSV files</span>
-              <small>Files stay in the browser for this MVP</small>
-            </label>
-            <input id="csvFiles" type="file" accept=".csv,text/csv" multiple>
-          </div>
-
-          <div class="summary-panel" aria-live="polite">
-            <h2>Run summary</h2>
-            <div id="summaryCards" class="summary-cards">
-              <article><strong>0</strong><span>Files</span></article>
-              <article><strong>0</strong><span>Rows read</span></article>
-              <article><strong>0</strong><span>Eligible rows</span></article>
-              <article><strong>0</strong><span>Issues</span></article>
-            </div>
-          </div>
-        </section>
-
-        <section class="results-panel">
+        <section class="upload-workflow" aria-labelledby="upload-title">
           <div class="section-heading">
             <div>
-              <h2>Preview and issues</h2>
-              <p id="resultsIntro">Upload CSV files to begin checking export rows.</p>
+              <h2 id="upload-title">File upload</h2>
+              <p>Each file is optional for now. Add whichever Removals Manager exports you can get, then check the files before moving on.</p>
             </div>
-            <button id="clearButton" class="secondary-button" type="button" disabled>Clear</button>
+            <div class="button-row">
+              <button id="checkButton" type="button">Check files</button>
+              <button id="clearButton" class="secondary-button" type="button" disabled>Clear</button>
+            </div>
           </div>
-          <div id="issuesList" class="issues-list"></div>
+
+          <form id="uploadForm" class="upload-grid">
+            <article class="file-card" data-slot="removalInvoices">
+              <div>
+                <h3>Removal invoices CSV</h3>
+                <p>Use the main removals invoice export from Removals Manager.</p>
+              </div>
+              <label for="removalInvoices">Choose CSV</label>
+              <input id="removalInvoices" type="file" accept=".csv,text/csv">
+              <p class="field-message" id="removalInvoicesMessage">No file selected yet. This is optional.</p>
+            </article>
+
+            <article class="file-card" data-slot="removalDeposits">
+              <div>
+                <h3>Removal deposits CSV</h3>
+                <p>Use this if deposits are exported separately from invoices.</p>
+              </div>
+              <label for="removalDeposits">Choose CSV</label>
+              <input id="removalDeposits" type="file" accept=".csv,text/csv">
+              <p class="field-message" id="removalDepositsMessage">No file selected yet. This is optional.</p>
+            </article>
+
+            <article class="file-card" data-slot="adHocInvoices">
+              <div>
+                <h3>Ad Hoc invoices CSV</h3>
+                <p>Use the ad hoc invoice export if Removals Manager provides one.</p>
+              </div>
+              <label for="adHocInvoices">Choose CSV</label>
+              <input id="adHocInvoices" type="file" accept=".csv,text/csv">
+              <p class="field-message" id="adHocInvoicesMessage">No file selected yet. This is optional.</p>
+            </article>
+
+            <article class="file-card" data-slot="creditNotes">
+              <div>
+                <h3>Credit notes CSV</h3>
+                <p>Add credit notes here if Removals Manager can export them.</p>
+              </div>
+              <label for="creditNotes">Choose CSV</label>
+              <input id="creditNotes" type="file" accept=".csv,text/csv">
+              <p class="field-message" id="creditNotesMessage">No file selected yet. This is optional.</p>
+            </article>
+
+            <article class="file-card" data-slot="monthlyReport">
+              <div>
+                <h3>Monthly invoice report PDF</h3>
+                <p>Add the monthly invoice report PDF if it is available for checking later.</p>
+              </div>
+              <label for="monthlyReport">Choose PDF</label>
+              <input id="monthlyReport" type="file" accept=".pdf,application/pdf">
+              <p class="field-message" id="monthlyReportMessage">No file selected yet. This is optional.</p>
+            </article>
+
+            <article class="file-card" data-slot="invoicePdfs">
+              <div>
+                <h3>Individual invoice PDFs</h3>
+                <p>Add a batch of invoice PDFs if you have them. Multiple files are allowed.</p>
+              </div>
+              <label for="invoicePdfs">Choose PDFs</label>
+              <input id="invoicePdfs" type="file" accept=".pdf,application/pdf" multiple>
+              <p class="field-message" id="invoicePdfsMessage">No files selected yet. This is optional.</p>
+            </article>
+          </form>
+        </section>
+
+        <section class="results-panel" aria-live="polite">
+          <div class="section-heading">
+            <div>
+              <h2>Upload summary</h2>
+              <p id="resultsIntro">Choose any files you have, then select Check files.</p>
+            </div>
+          </div>
+          <div id="summaryNotice" class="notice"></div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th>Upload field</th>
                   <th>File</th>
-                  <th>Row</th>
                   <th>Type</th>
-                  <th>Date</th>
-                  <th>Reference</th>
-                  <th>Description</th>
-                  <th>Net</th>
-                  <th>VAT</th>
+                  <th>Size</th>
                   <th>Status</th>
                 </tr>
               </thead>
-              <tbody id="previewBody">
-                <tr><td colspan="9" class="empty-state">No CSV rows loaded yet.</td></tr>
+              <tbody id="summaryBody">
+                <tr><td colspan="5" class="empty-state">No files checked yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -490,7 +537,7 @@ h2 {
 
 .lede,
 .hero-panel p,
-.upload-panel p,
+.upload-workflow p,
 .section-heading p {
   color: var(--muted);
   line-height: 1.55;
@@ -563,8 +610,7 @@ h2 {
 }
 
 .hero-panel,
-.upload-panel,
-.summary-panel,
+.upload-workflow,
 .results-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -605,52 +651,70 @@ h2 {
   font-weight: 800;
 }
 
-.workspace-grid {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.88fr) minmax(0, 1.12fr);
-  gap: 18px;
-  margin-top: 18px;
-}
-
-.upload-panel,
-.summary-panel,
+.upload-workflow,
 .results-panel {
+  margin-top: 18px;
   padding: 22px;
 }
 
-.drop-zone {
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.button-row button {
+  min-height: 40px;
+  padding: 0 16px;
+}
+
+.upload-grid {
   display: grid;
-  gap: 8px;
-  place-items: center;
-  min-height: 168px;
-  margin-top: 20px;
-  padding: 20px;
-  border: 1px dashed #8cb8af;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.file-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-height: 158px;
+  padding: 18px;
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fbfa;
-  color: var(--sage-dark);
-  cursor: pointer;
-  text-align: center;
-  font-weight: 800;
 }
 
-.drop-zone small {
-  color: var(--muted);
-  font-weight: 600;
+.file-card h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
 }
 
-.drop-icon {
-  display: grid;
-  width: 56px;
-  height: 56px;
-  place-items: center;
+.file-card p {
+  margin-bottom: 0;
+}
+
+.file-card label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
   border-radius: 8px;
-  background: var(--sky);
-  color: var(--sage-dark);
-  font-weight: 900;
+  background: var(--sage);
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
-#csvFiles {
+.file-card label:hover {
+  background: var(--sage-dark);
+}
+
+.file-card input {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -658,34 +722,20 @@ h2 {
   clip: rect(0 0 0 0);
 }
 
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.summary-cards article {
-  min-height: 96px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8fbfa;
-}
-
-.summary-cards strong {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 1.7rem;
-}
-
-.summary-cards span {
+.field-message {
+  grid-column: 1 / -1;
+  min-height: 22px;
   color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 700;
+  font-size: 0.88rem;
+  font-weight: 650;
 }
 
-.results-panel {
-  margin-top: 18px;
+.field-message.error {
+  color: var(--danger);
+}
+
+.field-message.success {
+  color: var(--sage-dark);
 }
 
 .section-heading {
@@ -696,32 +746,31 @@ h2 {
   margin-bottom: 18px;
 }
 
-.issues-list {
-  display: grid;
-  gap: 10px;
+.notice {
+  display: none;
   margin-bottom: 18px;
-}
-
-.issue-item {
   padding: 12px 14px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: #f8fbfa;
   color: var(--muted);
+  font-weight: 700;
 }
 
-.issue-item strong {
-  color: var(--ink);
+.notice.show {
+  display: block;
 }
 
-.issue-item.warning {
-  border-color: rgba(166, 83, 25, 0.25);
-  background: rgba(166, 83, 25, 0.08);
-}
-
-.issue-item.error {
+.notice.error {
   border-color: rgba(155, 28, 49, 0.25);
   background: rgba(155, 28, 49, 0.08);
+  color: var(--danger);
+}
+
+.notice.success {
+  border-color: rgba(15, 107, 91, 0.22);
+  background: rgba(15, 107, 91, 0.08);
+  color: var(--sage-dark);
 }
 
 .table-wrap {
@@ -780,6 +829,11 @@ tbody tr:last-child td {
   color: var(--danger);
 }
 
+.badge.muted {
+  background: #edf2f1;
+  color: var(--muted);
+}
+
 .empty-state {
   padding: 34px;
   color: var(--muted);
@@ -809,293 +863,237 @@ tbody tr:last-child td {
   .topbar,
   .section-heading {
     align-items: stretch;
+    flex-direction: column;
   }
 
-  .workspace-grid,
-  .summary-cards {
+  .upload-grid {
     grid-template-columns: 1fr;
   }
 
   .status-stack {
     min-width: 0;
   }
+
+  .file-card {
+    grid-template-columns: 1fr;
+  }
+
+  .file-card label,
+  .button-row button {
+    width: 100%;
+  }
 }
 `;
 
 const appJs = String.raw`
-const filesInput = document.querySelector("#csvFiles");
-const summaryCards = document.querySelector("#summaryCards");
-const previewBody = document.querySelector("#previewBody");
-const issuesList = document.querySelector("#issuesList");
+const uploadForm = document.querySelector("#uploadForm");
+const summaryBody = document.querySelector("#summaryBody");
+const summaryNotice = document.querySelector("#summaryNotice");
 const resultsIntro = document.querySelector("#resultsIntro");
 const clearButton = document.querySelector("#clearButton");
+const checkButton = document.querySelector("#checkButton");
 
-const columns = {
-  type: 0,
-  nominal: 2,
-  date: 4,
-  reference: 5,
-  description: 6,
-  net: 7,
-  taxCode: 8,
-  vat: 9,
-};
+const maxFileSizeBytes = 20 * 1024 * 1024;
+const uploadSlots = [
+  {
+    id: "removalInvoices",
+    label: "Removal invoices CSV",
+    kind: "CSV",
+    multiple: false,
+    extensions: [".csv"],
+    mimeTypes: ["text/csv", "application/vnd.ms-excel"],
+  },
+  {
+    id: "removalDeposits",
+    label: "Removal deposits CSV",
+    kind: "CSV",
+    multiple: false,
+    extensions: [".csv"],
+    mimeTypes: ["text/csv", "application/vnd.ms-excel"],
+  },
+  {
+    id: "adHocInvoices",
+    label: "Ad Hoc invoices CSV",
+    kind: "CSV",
+    multiple: false,
+    extensions: [".csv"],
+    mimeTypes: ["text/csv", "application/vnd.ms-excel"],
+  },
+  {
+    id: "creditNotes",
+    label: "Credit notes CSV",
+    kind: "CSV",
+    multiple: false,
+    extensions: [".csv"],
+    mimeTypes: ["text/csv", "application/vnd.ms-excel"],
+  },
+  {
+    id: "monthlyReport",
+    label: "Monthly invoice report PDF",
+    kind: "PDF",
+    multiple: false,
+    extensions: [".pdf"],
+    mimeTypes: ["application/pdf"],
+  },
+  {
+    id: "invoicePdfs",
+    label: "Individual invoice PDFs",
+    kind: "PDF",
+    multiple: true,
+    extensions: [".pdf"],
+    mimeTypes: ["application/pdf"],
+  },
+];
 
-filesInput.addEventListener("change", async (event) => {
-  const files = Array.from(event.target.files || []);
-  if (files.length === 0) {
-    return;
-  }
+for (const slot of uploadSlots) {
+  const input = document.querySelector("#" + slot.id);
+  input.addEventListener("change", () => updateFieldMessage(slot));
+}
 
-  const results = await Promise.all(files.map(readCsvFile));
-  const rows = results.flatMap((result) => result.rows);
-  const issues = results.flatMap((result) => result.issues);
-
-  renderSummary(files.length, rows, issues);
-  renderIssues(issues);
-  renderPreview(rows);
-
-  resultsIntro.textContent = rows.length > 0
-    ? "Showing the first 50 parsed rows. Storage rows are excluded from the eligible import count."
-    : "No usable rows were found in the selected files.";
-  clearButton.disabled = false;
+checkButton.addEventListener("click", () => {
+  const summaries = uploadSlots.flatMap(validateSlot);
+  renderSummary(summaries);
+  clearButton.disabled = summaries.every((item) => item.missing);
 });
 
 clearButton.addEventListener("click", () => {
-  filesInput.value = "";
-  renderSummary(0, [], []);
-  renderIssues([]);
-  renderPreview([]);
-  resultsIntro.textContent = "Upload CSV files to begin checking export rows.";
+  uploadForm.reset();
+  for (const slot of uploadSlots) {
+    setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
+  }
+  summaryNotice.className = "notice";
+  summaryNotice.textContent = "";
+  summaryBody.innerHTML = '<tr><td colspan="5" class="empty-state">No files checked yet.</td></tr>';
+  resultsIntro.textContent = "Choose any files you have, then select Check files.";
   clearButton.disabled = true;
 });
 
-async function readCsvFile(file) {
-  const text = await file.text();
-  const parsedRows = parseCsv(text).filter((row) => row.some((cell) => cell.trim() !== ""));
-  const issues = [];
-
-  if (parsedRows.length === 0) {
-    issues.push(issue("error", file.name, null, "File is empty or contains no readable rows."));
-    return { rows: [], issues };
-  }
-
-  const expectedColumns = mode(parsedRows.map((row) => row.length));
-  const rows = parsedRows.map((row, index) => analyseRow(file.name, row, index + 1, expectedColumns, issues));
-  return { rows, issues };
-}
-
-function analyseRow(fileName, raw, rowNumber, expectedColumns, issues) {
-  const row = {
-    fileName,
-    rowNumber,
-    raw,
-    type: cell(raw, columns.type),
-    date: cell(raw, columns.date),
-    reference: cell(raw, columns.reference),
-    description: cell(raw, columns.description),
-    net: cell(raw, columns.net),
-    taxCode: cell(raw, columns.taxCode),
-    vat: cell(raw, columns.vat),
-    excluded: false,
-    status: "Ready",
-    severity: "ok",
-  };
-
-  const rowIssues = [];
-  const searchable = [row.reference, row.description].join(" ").toLowerCase();
-
-  if (raw.length !== expectedColumns) {
-    rowIssues.push("Column count differs from the rest of the file.");
-  }
-
-  if (!["SI", "SC", "SD", "SA"].includes(row.type)) {
-    rowIssues.push("Unrecognised Sage transaction type.");
-  }
-
-  if (!isValidDate(row.date)) {
-    rowIssues.push("Missing or invalid date.");
-  }
-
-  if (!row.reference) {
-    rowIssues.push("Missing invoice/reference.");
-  }
-
-  if (!row.description) {
-    rowIssues.push("Missing line description.");
-  }
-
-  const net = parseMoney(row.net);
-  const vat = parseMoney(row.vat);
-
-  if (!Number.isFinite(net)) {
-    rowIssues.push("Net amount is not a valid number.");
-  }
-
-  if (!Number.isFinite(vat)) {
-    rowIssues.push("VAT amount is not a valid number.");
-  }
-
-  if (row.taxCode === "T1" && Number.isFinite(vat) && vat === 0) {
-    rowIssues.push("T1 tax code has zero VAT.");
-  }
-
-  if (row.taxCode === "T9" && Number.isFinite(vat) && vat !== 0) {
-    rowIssues.push("T9 tax code has a VAT amount.");
-  }
-
-  if (searchable.includes("storage")) {
-    row.excluded = true;
-    row.status = "Excluded: storage";
-    row.severity = "warning";
-    issues.push(issue("warning", fileName, rowNumber, "Storage invoice row should be excluded from Sage import."));
-  }
-
-  if (rowIssues.length > 0) {
-    row.status = row.excluded ? row.status : "Needs review";
-    row.severity = row.excluded ? "warning" : "error";
-    for (const message of rowIssues) {
-      issues.push(issue(row.excluded ? "warning" : "error", fileName, rowNumber, message));
-    }
-  }
-
-  return row;
-}
-
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let value = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
-
-    if (char === '"' && inQuotes && next === '"') {
-      value += '"';
-      index += 1;
-    } else if (char === '"') {
-      inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
-      row.push(value);
-      value = "";
-    } else if ((char === "\n" || char === "\r") && !inQuotes) {
-      if (char === "\r" && next === "\n") {
-        index += 1;
-      }
-      row.push(value);
-      rows.push(row);
-      row = [];
-      value = "";
-    } else {
-      value += char;
-    }
-  }
-
-  if (value.length > 0 || row.length > 0) {
-    row.push(value);
-    rows.push(row);
-  }
-
-  return rows;
-}
-
-function renderSummary(fileCount, rows, issues) {
-  const eligibleRows = rows.filter((row) => !row.excluded && row.severity !== "error").length;
-  summaryCards.innerHTML = [
-    ["Files", fileCount],
-    ["Rows read", rows.length],
-    ["Eligible rows", eligibleRows],
-    ["Issues", issues.length],
-  ].map(([label, value]) => "<article><strong>" + value + "</strong><span>" + label + "</span></article>").join("");
-}
-
-function renderIssues(issues) {
-  if (issues.length === 0) {
-    issuesList.innerHTML = "";
+function updateFieldMessage(slot) {
+  const files = getFiles(slot);
+  if (files.length === 0) {
+    setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
     return;
   }
 
-  const grouped = issues.slice(0, 12).map((item) => {
-    const location = item.rowNumber ? item.fileName + ", row " + item.rowNumber : item.fileName;
-    return '<div class="issue-item ' + item.severity + '"><strong>' + escapeHtml(location) + '</strong><br>' + escapeHtml(item.message) + "</div>";
+  const invalidCount = files.filter((file) => validateFile(file, slot).length > 0).length;
+  if (invalidCount > 0) {
+    setFieldMessage(slot.id, invalidCount + " selected file" + plural(invalidCount) + " need" + (invalidCount === 1 ? "s" : "") + " attention.", "error");
+  } else {
+    setFieldMessage(slot.id, files.length + " file" + plural(files.length) + " ready to check.", "success");
+  }
+}
+
+function validateSlot(slot) {
+  const files = getFiles(slot);
+  if (files.length === 0) {
+    return [{
+      slot: slot.label,
+      fileName: "Not added",
+      type: slot.kind,
+      size: "-",
+      passed: true,
+      missing: true,
+      status: "Optional",
+      message: "No file selected. You can add this later if available.",
+    }];
+  }
+
+  return files.map((file) => {
+    const errors = validateFile(file, slot);
+    return {
+      slot: slot.label,
+      fileName: file.name,
+      type: slot.kind,
+      size: formatFileSize(file.size),
+      passed: errors.length === 0,
+      missing: false,
+      status: errors.length === 0 ? "Passed" : "Needs attention",
+      message: errors.join(" "),
+    };
   });
-
-  if (issues.length > 12) {
-    grouped.push('<div class="issue-item"><strong>' + (issues.length - 12) + " more issues</strong><br>Review the source files before import preparation.</div>");
-  }
-
-  issuesList.innerHTML = grouped.join("");
 }
 
-function renderPreview(rows) {
-  if (rows.length === 0) {
-    previewBody.innerHTML = '<tr><td colspan="9" class="empty-state">No CSV rows loaded yet.</td></tr>';
-    return;
+function validateFile(file, slot) {
+  const errors = [];
+  const lowerName = file.name.toLowerCase();
+  const hasAllowedExtension = slot.extensions.some((extension) => lowerName.endsWith(extension));
+  const hasAllowedMime = file.type === "" || slot.mimeTypes.includes(file.type);
+
+  if (!hasAllowedExtension || !hasAllowedMime) {
+    errors.push(slot.label + " must be a " + slot.kind + " file.");
   }
 
-  previewBody.innerHTML = rows.slice(0, 50).map((row) => {
-    const badgeClass = row.severity === "ok" ? "" : " " + row.severity;
+  if (file.size === 0) {
+    errors.push("The file is empty.");
+  }
+
+  if (file.size > maxFileSizeBytes) {
+    errors.push("The file is too large. The limit is " + formatFileSize(maxFileSizeBytes) + " per file.");
+  }
+
+  return errors;
+}
+
+function renderSummary(items) {
+  const selectedItems = items.filter((item) => !item.missing);
+  const failedItems = selectedItems.filter((item) => !item.passed);
+
+  if (selectedItems.length === 0) {
+    summaryNotice.className = "notice show error";
+    summaryNotice.textContent = "No files selected. Add any exports or PDFs you have, then check again.";
+    resultsIntro.textContent = "Nothing has been selected yet.";
+  } else if (failedItems.length > 0) {
+    summaryNotice.className = "notice show error";
+    summaryNotice.textContent = failedItems.length + " selected file" + plural(failedItems.length) + " need" + (failedItems.length === 1 ? "s" : "") + " attention before the next step.";
+    resultsIntro.textContent = "Review the messages below. Files are checked only by type and size for now.";
+  } else {
+    summaryNotice.className = "notice show success";
+    summaryNotice.textContent = selectedItems.length + " selected file" + plural(selectedItems.length) + " passed the basic checks.";
+    resultsIntro.textContent = "These files are ready for the next MVP step. No contents have been parsed yet.";
+  }
+
+  summaryBody.innerHTML = items.map((item) => {
+    const badgeClass = item.missing ? " muted" : item.passed ? "" : " error";
+    const statusText = item.missing ? item.status : item.status + (item.message ? ": " + item.message : "");
     return "<tr>" +
-      tableCell(row.fileName) +
-      tableCell(row.rowNumber) +
-      tableCell(row.type) +
-      tableCell(row.date) +
-      tableCell(row.reference) +
-      tableCell(row.description) +
-      tableCell(row.net) +
-      tableCell(row.vat) +
-      '<td><span class="badge' + badgeClass + '">' + escapeHtml(row.status) + "</span></td>" +
+      tableCell(item.slot) +
+      tableCell(item.fileName) +
+      tableCell(item.type) +
+      tableCell(item.size) +
+      '<td><span class="badge' + badgeClass + '">' + escapeHtml(statusText) + "</span></td>" +
       "</tr>";
   }).join("");
+}
+
+function getFiles(slot) {
+  const input = document.querySelector("#" + slot.id);
+  return Array.from(input.files || []);
+}
+
+function setFieldMessage(id, message, state) {
+  const element = document.querySelector("#" + id + "Message");
+  element.textContent = message;
+  element.className = "field-message" + (state ? " " + state : "");
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) {
+    return bytes + " B";
+  }
+
+  if (bytes < 1024 * 1024) {
+    return (bytes / 1024).toFixed(1) + " KB";
+  }
+
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
 function tableCell(value) {
   return "<td>" + escapeHtml(String(value ?? "")) + "</td>";
 }
 
-function issue(severity, fileName, rowNumber, message) {
-  return { severity, fileName, rowNumber, message };
-}
-
-function cell(row, index) {
-  return String(row[index] ?? "").trim();
-}
-
-function parseMoney(value) {
-  const cleaned = String(value).replace(/,/g, "").trim();
-  if (cleaned === "") {
-    return Number.NaN;
-  }
-  return Number(cleaned);
-}
-
-function isValidDate(value) {
-  const trimmed = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return !Number.isNaN(Date.parse(trimmed + "T00:00:00Z"));
-  }
-
-  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!match) {
-    return false;
-  }
-
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-function mode(values) {
-  const counts = new Map();
-  for (const value of values) {
-    counts.set(value, (counts.get(value) || 0) + 1);
-  }
-
-  return values.reduce((best, value) => counts.get(value) > counts.get(best) ? value : best, values[0]);
+function plural(count) {
+  return count === 1 ? "" : "s";
 }
 
 function escapeHtml(value) {
