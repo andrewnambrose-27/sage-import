@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+*.log
+
+# Local Removals Manager exports can contain customer data.
+*.csv
