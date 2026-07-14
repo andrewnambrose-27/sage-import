@@ -1,3 +1,5 @@
+import { parseRemovalsCsv, type TransactionType } from "./removalsParser";
+
 interface Env {
   APP_ACCESS_PASSWORD?: string;
 }
@@ -44,6 +46,10 @@ export default {
         return redirect("/login");
       }
 
+      if (url.pathname === "/api/parse-csv" && request.method === "POST") {
+        return handleCsvParse(request);
+      }
+
       if ((url.pathname === "/" || url.pathname === "/dashboard" || url.pathname === "/upload") && request.method === "GET") {
         return htmlResponse(uploadPage());
       }
@@ -55,6 +61,63 @@ export default {
     }
   },
 };
+
+async function handleCsvParse(request: Request): Promise<Response> {
+  const form = await request.formData();
+  const files = [
+    { formName: "removalInvoices", transactionType: "removal" },
+    { formName: "removalDeposits", transactionType: "deposit" },
+    { formName: "adHocInvoices", transactionType: "ad_hoc" },
+    { formName: "creditNotes", transactionType: "credit_note" },
+  ] satisfies Array<{ formName: string; transactionType: TransactionType }>;
+
+  const parsedFiles = [];
+  const rows = [];
+
+  for (const config of files) {
+    const file = form.get(config.formName);
+
+    if (!(file instanceof File) || file.size === 0) {
+      continue;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      parsedFiles.push({
+        field: config.formName,
+        file_name: file.name,
+        transaction_type: config.transactionType,
+        rows: 0,
+        warnings: [`${file.name} was skipped because it is not a CSV file.`],
+      });
+      continue;
+    }
+
+    const text = await file.text();
+    const parsedRows = parseRemovalsCsv(text, {
+      transactionType: config.transactionType,
+      sourceFile: file.name,
+    });
+
+    parsedFiles.push({
+      field: config.formName,
+      file_name: file.name,
+      transaction_type: config.transactionType,
+      rows: parsedRows.length,
+      warnings: [],
+    });
+    rows.push(...parsedRows);
+  }
+
+  return jsonResponse({
+    files: parsedFiles,
+    rows,
+    totals: {
+      files: parsedFiles.length,
+      rows: rows.length,
+      rows_with_warnings: rows.filter((row) => row.warnings.length > 0).length,
+    },
+  });
+}
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
   const configuredPassword = env.APP_ACCESS_PASSWORD;
@@ -233,6 +296,16 @@ function textResponse(body: string, contentType: string): Response {
       "Content-Type": contentType,
       ...securityHeaders,
       "Cache-Control": "public, max-age=3600",
+    },
+  });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...securityHeaders,
     },
   });
 }
@@ -454,7 +527,7 @@ function uploadPage(): string {
         <section class="results-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <h2>Upload summary</h2>
+              <h2>Parsed preview</h2>
               <p id="resultsIntro">Choose any files you have, then select Check files.</p>
             </div>
           </div>
@@ -463,15 +536,19 @@ function uploadPage(): string {
             <table>
               <thead>
                 <tr>
-                  <th>Upload field</th>
                   <th>File</th>
+                  <th>Row</th>
                   <th>Type</th>
-                  <th>Size</th>
-                  <th>Status</th>
+                  <th>Invoice</th>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Amount</th>
+                  <th>VAT</th>
+                  <th>Warnings</th>
                 </tr>
               </thead>
               <tbody id="summaryBody">
-                <tr><td colspan="5" class="empty-state">No files checked yet.</td></tr>
+                <tr><td colspan="9" class="empty-state">No files checked yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1036,10 +1113,51 @@ for (const slot of uploadSlots) {
   input.addEventListener("change", () => updateFieldMessage(slot));
 }
 
-checkButton.addEventListener("click", () => {
+checkButton.addEventListener("click", async () => {
+  checkButton.disabled = true;
+  checkButton.textContent = "Checking...";
+
   const summaries = uploadSlots.flatMap(validateSlot);
-  renderSummary(summaries);
-  clearButton.disabled = summaries.every((item) => item.missing);
+  const selectedItems = summaries.filter((item) => !item.missing);
+  const failedItems = selectedItems.filter((item) => !item.passed);
+
+  clearButton.disabled = selectedItems.length === 0;
+
+  try {
+    if (selectedItems.length === 0) {
+      renderNotice("error", "No files selected. Add any exports or PDFs you have, then check again.");
+      renderEmpty("No files checked yet.");
+      resultsIntro.textContent = "Nothing has been selected yet.";
+      return;
+    }
+
+    if (failedItems.length > 0) {
+      renderNotice("error", failedItems.length + " selected file" + plural(failedItems.length) + " need" + (failedItems.length === 1 ? "s" : "") + " attention before parsing.");
+      renderFileSummary(summaries);
+      resultsIntro.textContent = "Fix the file type or size warnings before parsing CSV rows.";
+      return;
+    }
+
+    const csvSummaries = summaries.filter((item) => item.kind === "CSV" && !item.missing);
+    const pdfSummaries = summaries.filter((item) => item.kind === "PDF" && !item.missing);
+
+    if (csvSummaries.length === 0) {
+      renderNotice("success", pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed the basic checks. Add a CSV export when you are ready to parse rows.");
+      renderFileSummary(summaries);
+      resultsIntro.textContent = "PDFs are not parsed in this step.";
+      return;
+    }
+
+    const result = await parseCsvFiles();
+    renderParsedRows(result, pdfSummaries);
+  } catch (error) {
+    renderNotice("error", "The CSV files could not be parsed. Please try again or check the exports.");
+    renderEmpty("Parsing failed.");
+    console.error(error);
+  } finally {
+    checkButton.disabled = false;
+    checkButton.textContent = "Check files";
+  }
 });
 
 clearButton.addEventListener("click", () => {
@@ -1049,7 +1167,7 @@ clearButton.addEventListener("click", () => {
   }
   summaryNotice.className = "notice";
   summaryNotice.textContent = "";
-  summaryBody.innerHTML = '<tr><td colspan="5" class="empty-state">No files checked yet.</td></tr>';
+  renderEmpty("No files checked yet.");
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
   clearButton.disabled = true;
 });
@@ -1076,6 +1194,7 @@ function validateSlot(slot) {
       slot: slot.label,
       fileName: "Not added",
       type: slot.kind,
+      kind: slot.kind,
       size: "-",
       passed: true,
       missing: true,
@@ -1090,6 +1209,7 @@ function validateSlot(slot) {
       slot: slot.label,
       fileName: file.name,
       type: slot.kind,
+      kind: slot.kind,
       size: formatFileSize(file.size),
       passed: errors.length === 0,
       missing: false,
@@ -1120,35 +1240,101 @@ function validateFile(file, slot) {
   return errors;
 }
 
-function renderSummary(items) {
-  const selectedItems = items.filter((item) => !item.missing);
-  const failedItems = selectedItems.filter((item) => !item.passed);
-
-  if (selectedItems.length === 0) {
-    summaryNotice.className = "notice show error";
-    summaryNotice.textContent = "No files selected. Add any exports or PDFs you have, then check again.";
-    resultsIntro.textContent = "Nothing has been selected yet.";
-  } else if (failedItems.length > 0) {
-    summaryNotice.className = "notice show error";
-    summaryNotice.textContent = failedItems.length + " selected file" + plural(failedItems.length) + " need" + (failedItems.length === 1 ? "s" : "") + " attention before the next step.";
-    resultsIntro.textContent = "Review the messages below. Files are checked only by type and size for now.";
-  } else {
-    summaryNotice.className = "notice show success";
-    summaryNotice.textContent = selectedItems.length + " selected file" + plural(selectedItems.length) + " passed the basic checks.";
-    resultsIntro.textContent = "These files are ready for the next MVP step. No contents have been parsed yet.";
-  }
-
+function renderFileSummary(items) {
   summaryBody.innerHTML = items.map((item) => {
     const badgeClass = item.missing ? " muted" : item.passed ? "" : " error";
     const statusText = item.missing ? item.status : item.status + (item.message ? ": " + item.message : "");
     return "<tr>" +
-      tableCell(item.slot) +
       tableCell(item.fileName) +
+      tableCell("-") +
       tableCell(item.type) +
+      tableCell("-") +
+      tableCell("-") +
+      tableCell(item.slot) +
       tableCell(item.size) +
+      tableCell("-") +
       '<td><span class="badge' + badgeClass + '">' + escapeHtml(statusText) + "</span></td>" +
       "</tr>";
   }).join("");
+}
+
+async function parseCsvFiles() {
+  const formData = new FormData();
+  for (const slot of uploadSlots.filter((item) => item.kind === "CSV")) {
+    const files = getFiles(slot);
+    if (files[0]) {
+      formData.append(slot.id, files[0]);
+    }
+  }
+
+  const response = await fetch("/api/parse-csv", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error("CSV parsing failed");
+  }
+
+  return response.json();
+}
+
+function renderParsedRows(result, pdfSummaries) {
+  const rows = result.rows || [];
+  const warningCount = rows.filter((row) => row.warnings.length > 0).length;
+  const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
+
+  if (rows.length === 0) {
+    renderNotice("error", "No CSV rows were found to parse." + pdfText);
+    renderEmpty("No CSV rows found.");
+    resultsIntro.textContent = "Bad or empty CSV files are not discarded, but there were no rows to show.";
+    return;
+  }
+
+  if (warningCount > 0) {
+    renderNotice("error", rows.length + " CSV row" + plural(rows.length) + " parsed, with " + warningCount + " row" + plural(warningCount) + " needing review." + pdfText);
+    resultsIntro.textContent = "Rows with warnings are kept in the preview so they can be fixed or investigated.";
+  } else {
+    renderNotice("success", rows.length + " CSV row" + plural(rows.length) + " parsed successfully." + pdfText);
+    resultsIntro.textContent = "Amounts and VAT are normalised as numbers, and dates are normalised internally to ISO format.";
+  }
+
+  summaryBody.innerHTML = rows.slice(0, 100).map((row) => {
+    const warnings = row.warnings.length > 0 ? row.warnings.join(" ") : "OK";
+    const badgeClass = row.warnings.length > 0 ? " warning" : "";
+    return "<tr>" +
+      tableCell(row.source_file) +
+      tableCell(row.row_number) +
+      tableCell(formatTransactionType(row.transaction_type)) +
+      tableCell(row.invoice_number || "-") +
+      tableCell(row.date || "-") +
+      tableCell(row.description || "-") +
+      tableCell(formatMoney(row.amount)) +
+      tableCell(formatMoney(row.vat_amount)) +
+      '<td><span class="badge' + badgeClass + '">' + escapeHtml(warnings) + "</span></td>" +
+      "</tr>";
+  }).join("");
+
+  if (rows.length > 100) {
+    summaryBody.insertAdjacentHTML("beforeend", '<tr><td colspan="9" class="empty-state">Showing first 100 rows only.</td></tr>');
+  }
+}
+
+function renderNotice(state, message) {
+  summaryNotice.className = "notice show " + state;
+  summaryNotice.textContent = message;
+}
+
+function renderEmpty(message) {
+  summaryBody.innerHTML = '<tr><td colspan="9" class="empty-state">' + escapeHtml(message) + "</td></tr>";
+}
+
+function formatTransactionType(value) {
+  return String(value).replaceAll("_", " ");
+}
+
+function formatMoney(value) {
+  return typeof value === "number" ? value.toFixed(2) : "-";
 }
 
 function getFiles(slot) {

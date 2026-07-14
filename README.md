@@ -2,7 +2,7 @@
 
 Private MVP for checking old Removals Manager CSV exports before they are prepared for Sage Business Cloud.
 
-This first version does not connect to Sage and does not permanently store uploaded customer data. The upload workflow checks selected file names, file types and file sizes only. It does not parse invoice contents yet.
+This first version does not connect to Sage and does not permanently store uploaded customer data. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings.
 
 ## Features
 
@@ -13,7 +13,9 @@ This first version does not connect to Sage and does not permanently store uploa
 - Protected dashboard
 - Upload fields for Removals Manager CSV exports and PDF reports
 - Browser-only file validation for type and size
-- Basic upload summary showing file name, file type, file size and validation status
+- CSV parsing for removals, deposits, ad hoc invoices and credit notes
+- Normalised invoice numbers, dates, amounts and VAT values
+- Preview table with row-level warnings
 
 ## Local Setup
 
@@ -74,5 +76,6 @@ The root `index.html` file is a simple live-check page for confirming that `sage
 - Do not commit real Removals Manager CSV exports. `*.csv` is ignored by git.
 - Uploaded files are not sent to the Worker in this version.
 - Uploads are optional at this stage, so missing files are shown as optional rather than blocking.
-- File contents are not parsed yet.
+- CSV files are processed in memory only and are not stored permanently.
+- PDF files are validated for type and size but are not parsed yet.
 - Sage API/import integration is intentionally not included yet.
