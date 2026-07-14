@@ -15,6 +15,8 @@ This first version does not connect to Sage and does not permanently store uploa
 - Browser-only file validation for type and size
 - CSV parsing for removals, deposits, ad hoc invoices and credit notes
 - Normalised invoice numbers, dates, amounts and VAT values
+- Monthly invoice report PDF text extraction and invoice-level reconciliation
+- Customer names and service types matched from the monthly PDF where possible
 - Preview table with row-level warnings
 
 ## Local Setup
@@ -79,5 +81,6 @@ The root `index.html` file is a simple live-check page for confirming that `sage
 - Uploaded files are not sent to the Worker in this version.
 - Uploads are optional at this stage, so missing files are shown as optional rather than blocking.
 - CSV files are processed in memory only and are not stored permanently.
-- PDF files are validated for type and size but are not parsed yet.
+- The monthly invoice report PDF is read in memory for reconciliation only.
+- Individual invoice PDFs are validated for type and size but are not parsed yet.
 - Sage API/import integration is intentionally not included yet.

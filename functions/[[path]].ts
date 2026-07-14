@@ -1,3 +1,5 @@
+import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
+import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
 
 interface Env {
@@ -77,6 +79,7 @@ async function handleCsvParse(request: Request): Promise<Response> {
 
   const parsedFiles = [];
   const rows = [];
+  const monthlyReportText = String(form.get("monthlyReportText") ?? "");
 
   for (const config of files) {
     const file = form.get(config.formName);
@@ -112,13 +115,22 @@ async function handleCsvParse(request: Request): Promise<Response> {
     rows.push(...parsedRows);
   }
 
+  const pdfRows = monthlyReportText ? parseMonthlyInvoiceReportText(monthlyReportText) : [];
+  const reconciliationResult = pdfRows.length > 0
+    ? reconcileTransactionsWithPdf(rows, pdfRows)
+    : { transactions: rows, pdf_rows: [], reconciliation: [] };
+
   return jsonResponse({
     files: parsedFiles,
-    rows,
+    rows: reconciliationResult.transactions,
+    pdf_rows: reconciliationResult.pdf_rows,
+    reconciliation: reconciliationResult.reconciliation,
     totals: {
       files: parsedFiles.length,
-      rows: rows.length,
-      rows_with_warnings: rows.filter((row) => row.warnings.length > 0).length,
+      rows: reconciliationResult.transactions.length,
+      rows_with_warnings: reconciliationResult.transactions.filter((row) => row.warnings.length > 0).length,
+      pdf_rows: reconciliationResult.pdf_rows.length,
+      reconciliation_rows: reconciliationResult.reconciliation.length,
     },
   });
 }
@@ -444,7 +456,7 @@ function uploadPage(): string {
           <div>
             <p class="eyebrow">Upload check</p>
             <h2>Add the export files you have available.</h2>
-            <p>This step only checks file names, file types and file sizes. The app does not read invoice contents yet and does not permanently store files.</p>
+            <p>CSV files are parsed in memory, and the monthly report PDF can be used to match customer names, service types, totals and VAT. Nothing is stored permanently.</p>
           </div>
           <div class="status-stack" aria-label="Current safeguards">
             <span>Private login</span>
@@ -546,13 +558,44 @@ function uploadPage(): string {
                   <th>Invoice</th>
                   <th>Date</th>
                   <th>Description</th>
+                  <th>Customer</th>
+                  <th>Service</th>
                   <th>Amount</th>
                   <th>VAT</th>
                   <th>Warnings</th>
                 </tr>
               </thead>
               <tbody id="summaryBody">
-                <tr><td colspan="9" class="empty-state">No files checked yet.</td></tr>
+                <tr><td colspan="11" class="empty-state">No files checked yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="results-panel" aria-live="polite">
+          <div class="section-heading">
+            <div>
+              <h2>Reconciliation</h2>
+              <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Invoice</th>
+                  <th>Status</th>
+                  <th>Customer</th>
+                  <th>Service</th>
+                  <th>CSV total</th>
+                  <th>PDF total</th>
+                  <th>CSV VAT</th>
+                  <th>PDF VAT</th>
+                  <th>Warnings</th>
+                </tr>
+              </thead>
+              <tbody id="reconciliationBody">
+                <tr><td colspan="9" class="empty-state">No reconciliation run yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1057,6 +1100,8 @@ const uploadForm = document.querySelector("#uploadForm");
 const summaryBody = document.querySelector("#summaryBody");
 const summaryNotice = document.querySelector("#summaryNotice");
 const resultsIntro = document.querySelector("#resultsIntro");
+const reconciliationBody = document.querySelector("#reconciliationBody");
+const reconciliationIntro = document.querySelector("#reconciliationIntro");
 const clearButton = document.querySelector("#clearButton");
 const checkButton = document.querySelector("#checkButton");
 
@@ -1131,14 +1176,18 @@ checkButton.addEventListener("click", async () => {
     if (selectedItems.length === 0) {
       renderNotice("error", "No files selected. Add any exports or PDFs you have, then check again.");
       renderEmpty("No files checked yet.");
+      renderReconciliationEmpty("No reconciliation run yet.");
       resultsIntro.textContent = "Nothing has been selected yet.";
+      reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
       return;
     }
 
     if (failedItems.length > 0) {
       renderNotice("error", failedItems.length + " selected file" + plural(failedItems.length) + " need" + (failedItems.length === 1 ? "s" : "") + " attention before parsing.");
       renderFileSummary(summaries);
+      renderReconciliationEmpty("Fix file warnings before reconciliation.");
       resultsIntro.textContent = "Fix the file type or size warnings before parsing CSV rows.";
+      reconciliationIntro.textContent = "Reconciliation will run after the selected files pass basic checks.";
       return;
     }
 
@@ -1148,7 +1197,9 @@ checkButton.addEventListener("click", async () => {
     if (csvSummaries.length === 0) {
       renderNotice("success", pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed the basic checks. Add a CSV export when you are ready to parse rows.");
       renderFileSummary(summaries);
+      renderReconciliationEmpty("Add a CSV export before reconciliation.");
       resultsIntro.textContent = "PDFs are not parsed in this step.";
+      reconciliationIntro.textContent = "Reconciliation needs at least one CSV export and the monthly invoice report PDF.";
       return;
     }
 
@@ -1172,7 +1223,9 @@ clearButton.addEventListener("click", () => {
   summaryNotice.className = "notice";
   summaryNotice.textContent = "";
   renderEmpty("No files checked yet.");
+  renderReconciliationEmpty("No reconciliation run yet.");
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
+  reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
   clearButton.disabled = true;
 });
 
@@ -1255,6 +1308,8 @@ function renderFileSummary(items) {
       tableCell("-") +
       tableCell("-") +
       tableCell(item.slot) +
+      tableCell("-") +
+      tableCell("-") +
       tableCell(item.size) +
       tableCell("-") +
       '<td><span class="badge' + badgeClass + '">' + escapeHtml(statusText) + "</span></td>" +
@@ -1269,6 +1324,11 @@ async function parseCsvFiles() {
     if (files[0]) {
       formData.append(slot.id, files[0]);
     }
+  }
+
+  const monthlyReport = getFiles(uploadSlots.find((item) => item.id === "monthlyReport"))[0];
+  if (monthlyReport) {
+    formData.append("monthlyReportText", await extractPdfText(monthlyReport));
   }
 
   const response = await fetch("/api/parse-csv", {
@@ -1287,6 +1347,7 @@ function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
+  renderReconciliation(result.reconciliation || []);
 
   if (rows.length === 0) {
     renderNotice("error", "No CSV rows were found to parse." + pdfText);
@@ -1313,6 +1374,8 @@ function renderParsedRows(result, pdfSummaries) {
       tableCell(row.invoice_number || "-") +
       tableCell(row.date || "-") +
       tableCell(row.description || "-") +
+      tableCell(row.customer_name || "-") +
+      tableCell(row.service_type || "-") +
       tableCell(formatMoney(row.amount)) +
       tableCell(formatMoney(row.vat_amount)) +
       '<td><span class="badge' + badgeClass + '">' + escapeHtml(warnings) + "</span></td>" +
@@ -1320,8 +1383,56 @@ function renderParsedRows(result, pdfSummaries) {
   }).join("");
 
   if (rows.length > 100) {
-    summaryBody.insertAdjacentHTML("beforeend", '<tr><td colspan="9" class="empty-state">Showing first 100 rows only.</td></tr>');
+    summaryBody.insertAdjacentHTML("beforeend", '<tr><td colspan="11" class="empty-state">Showing first 100 rows only.</td></tr>');
   }
+}
+
+function renderReconciliation(rows) {
+  if (rows.length === 0) {
+    renderReconciliationEmpty("No monthly PDF reconciliation available.");
+    reconciliationIntro.textContent = "Add the monthly invoice report PDF to compare against CSV rows.";
+    return;
+  }
+
+  const issueCount = rows.filter((row) => row.status !== "matched").length;
+  reconciliationIntro.textContent = issueCount === 0
+    ? rows.length + " invoice" + plural(rows.length) + " matched the monthly PDF report. Matching is a check only, not an approval."
+    : issueCount + " invoice" + plural(issueCount) + " need" + (issueCount === 1 ? "s" : "") + " review after comparing CSV and PDF data.";
+
+  reconciliationBody.innerHTML = rows.map((row) => {
+    const badgeClass = row.status === "matched" ? "" : row.status.includes("mismatch") || row.status.includes("missing") ? " error" : " warning";
+    return "<tr>" +
+      tableCell(row.invoice_number) +
+      '<td><span class="badge' + badgeClass + '">' + escapeHtml(formatStatus(row.status)) + "</span></td>" +
+      tableCell(row.customer_name || "-") +
+      tableCell(row.service_type || "-") +
+      tableCell(formatMoney(row.csv_amount)) +
+      tableCell(formatMoney(row.pdf_amount)) +
+      tableCell(formatMoney(row.csv_vat)) +
+      tableCell(formatMoney(row.pdf_vat)) +
+      tableCell(row.warnings.length > 0 ? row.warnings.join(" ") : "OK") +
+      "</tr>";
+  }).join("");
+}
+
+function renderReconciliationEmpty(message) {
+  reconciliationBody.innerHTML = '<tr><td colspan="9" class="empty-state">' + escapeHtml(message) + "</td></tr>";
+}
+
+async function extractPdfText(file) {
+  const pdfjs = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+  const document = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => item.str).join(" "));
+  }
+
+  return pages.join("\\n");
 }
 
 function renderNotice(state, message) {
@@ -1330,10 +1441,14 @@ function renderNotice(state, message) {
 }
 
 function renderEmpty(message) {
-  summaryBody.innerHTML = '<tr><td colspan="9" class="empty-state">' + escapeHtml(message) + "</td></tr>";
+  summaryBody.innerHTML = '<tr><td colspan="11" class="empty-state">' + escapeHtml(message) + "</td></tr>";
 }
 
 function formatTransactionType(value) {
+  return String(value).replaceAll("_", " ");
+}
+
+function formatStatus(value) {
   return String(value).replaceAll("_", " ");
 }
 

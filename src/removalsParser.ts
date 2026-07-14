@@ -16,6 +16,9 @@ export interface NormalizedTransaction {
   amount: number | null;
   tax_code: string;
   vat_amount: number | null;
+  customer_name?: string;
+  service_type?: string;
+  pdf_match_status?: string;
   warnings: string[];
 }
 
@@ -147,7 +150,7 @@ export function parseMoney(input: string): number | null {
   }
 
   const negative = /^\(.*\)$/.test(value);
-  const cleaned = value.replace(/[£,\s()]/g, "");
+  const cleaned = value.replace(/[\u00A3,\s()]/g, "");
 
   if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) {
     return null;
