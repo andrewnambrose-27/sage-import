@@ -2,7 +2,7 @@
 
 Private MVP for checking old Removals Manager CSV exports before they are prepared for Sage Business Cloud.
 
-This first version does not connect to Sage and does not permanently store uploaded customer data. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings.
+This version does not connect to Sage. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings. Reviewed normalized records can be saved to Cloudflare D1, but uploaded CSV/PDF files are not stored permanently.
 
 ## Features
 
@@ -20,6 +20,8 @@ This first version does not connect to Sage and does not permanently store uploa
 - Configurable transaction classification rules
 - Import-candidate, storage-exclusion, duplicate, mismatch and review summaries
 - Preview table with row-level warnings
+- Review screen with manual include, exclude and review-needed decisions
+- Optional Cloudflare D1 persistence for reviewed normalized records and metadata
 
 ## Local Setup
 
@@ -77,13 +79,51 @@ Use these build settings:
 
 The root `index.html` file is a simple live-check page for confirming that `sage-import.27tools.co` is serving the repository. Dynamic login, upload and CSV parsing routes run through Cloudflare Pages Functions in `functions/[[path]].ts`.
 
+## Cloudflare D1 Storage
+
+D1 is used for reviewed normalized records only. Uploaded CSV/PDF files should still not be stored permanently.
+
+Create the database:
+
+```bash
+npx wrangler d1 create sage-import-db
+```
+
+Add the returned database as a Pages D1 binding named `DB`. You can do this in Cloudflare Pages under **Settings > Bindings > D1 database bindings**, or by adding the returned `d1_databases` block to `wrangler.jsonc` once the real `database_id` is known.
+
+Apply migrations locally:
+
+```bash
+npx wrangler d1 migrations apply sage-import-db --local
+```
+
+Apply migrations remotely:
+
+```bash
+npx wrangler d1 migrations apply sage-import-db --remote
+```
+
+For local Pages development, the `DB` binding must be available before the "Save reviewed batch" action will persist data. Without the binding, upload, parsing, reconciliation and review still work in memory.
+
+The initial migration lives at `migrations/0001_initial_d1_storage.sql` and creates:
+
+- `import_batches`
+- `source_invoices`
+- `sage_connections`
+- `customer_mappings`
+- `sage_reference_mappings`
+- `sage_imports`
+
+Money is stored as integer minor units, for example pence, to avoid floating-point storage errors. OAuth token columns are present for a later Sage integration stage, but Sage API access is not implemented yet; tokens must be encrypted before anything is written to those columns.
+
 ## Important MVP Notes
 
 - Do not commit real Removals Manager CSV exports. `*.csv` is ignored by git.
-- Uploaded files are not sent to the Worker in this version.
+- Uploaded CSV files are sent to the Worker for in-memory parsing only.
 - Uploads are optional at this stage, so missing files are shown as optional rather than blocking.
-- CSV files are processed in memory only and are not stored permanently.
+- CSV files are processed in memory and are not stored permanently.
 - The monthly invoice report PDF is read in memory for reconciliation only.
 - Individual invoice PDFs are validated for type and size but are not parsed yet.
 - Rows marked `needs_review` or `exclude_storage` are not export-eligible by default.
+- The D1 save action stores normalized/reconciled row metadata, warnings and raw CSV row values for debugging, not the uploaded files.
 - Sage API/import integration is intentionally not included yet.

@@ -1,10 +1,12 @@
 import { classifyTransactions } from "../src/classification";
+import { DuplicateSourceInvoiceError, createImportDatabase } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
+  DB?: D1Database;
 }
 
 const SESSION_COOKIE = "sage_import_session";
@@ -56,6 +58,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/parse-csv" && request.method === "POST") {
         return handleCsvParse(request);
+      }
+
+      if (url.pathname === "/api/import-batches" && request.method === "POST") {
+        return handleImportBatchSave(request, env);
       }
 
       if ((url.pathname === "/" || url.pathname === "/dashboard" || url.pathname === "/upload") && request.method === "GET") {
@@ -139,6 +145,56 @@ async function handleCsvParse(request: Request): Promise<Response> {
       reconciliation_rows: reconciliationResult.reconciliation.length,
     },
   });
+}
+
+async function handleImportBatchSave(request: Request, env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({
+      ok: false,
+      error: "D1 database is not configured yet. Add the DB binding before saving reviewed batches.",
+    }, 503);
+  }
+
+  const body = await request.json() as {
+    reporting_month?: string | null;
+    original_file_names?: string[];
+    rows?: [];
+  };
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+
+  if (rows.length === 0) {
+    return jsonResponse({ ok: false, error: "There are no reviewed transactions to save." }, 400);
+  }
+
+  const database = createImportDatabase(env.DB);
+  const createdBy = await sessionIdentifier(request);
+
+  try {
+    const result = await database.saveReviewedBatch({
+      reportingMonth: body.reporting_month ?? null,
+      createdBy,
+      originalFileNames: Array.isArray(body.original_file_names) ? body.original_file_names : [],
+      rows,
+    });
+
+    return jsonResponse({
+      ok: true,
+      import_batch_id: result.batch.id,
+      invoice_count: result.batch.invoice_count,
+      duplicate_blocked: false,
+    });
+  } catch (error) {
+    if (error instanceof DuplicateSourceInvoiceError) {
+      return jsonResponse({
+        ok: false,
+        duplicate_blocked: true,
+        error: "One or more of these source invoices has already been saved.",
+      }, 409);
+    }
+
+    console.error("Failed to save import batch", error);
+    return jsonResponse({ ok: false, error: "The reviewed batch could not be saved." }, 500);
+  }
 }
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
@@ -271,6 +327,12 @@ function getCookie(header: string, name: string): string | null {
   }
 
   return null;
+}
+
+async function sessionIdentifier(request: Request): Promise<string> {
+  const cookie = getCookie(request.headers.get("Cookie") ?? "", SESSION_COOKIE) ?? "unknown-session";
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(cookie));
+  return `session:${base64UrlFromBytes(new Uint8Array(digest)).slice(0, 24)}`;
 }
 
 function btoaUrl(value: string): string {
@@ -625,9 +687,11 @@ function uploadPage(): string {
               <p id="reviewIntro">This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.</p>
             </div>
             <div class="button-row">
+              <button id="saveBatchButton" type="button" disabled>Save reviewed batch</button>
               <button id="exportReviewButton" class="secondary-button" type="button" disabled>Export review CSV</button>
             </div>
           </div>
+          <div id="reviewSaveNotice" class="notice"></div>
           <div id="reviewFilters" class="filter-row" aria-label="Review filters">
             <button type="button" class="filter-button active" data-filter="all">All</button>
             <button type="button" class="filter-button" data-filter="import_candidates">Import candidates</button>
@@ -1274,10 +1338,13 @@ const reviewIntro = document.querySelector("#reviewIntro");
 const reviewFilters = document.querySelector("#reviewFilters");
 const reviewTotals = document.querySelector("#reviewTotals");
 const exportReviewButton = document.querySelector("#exportReviewButton");
+const saveBatchButton = document.querySelector("#saveBatchButton");
+const reviewSaveNotice = document.querySelector("#reviewSaveNotice");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
 let reviewRows = [];
 let activeReviewFilter = "all";
+let latestOriginalFileNames = [];
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -1368,6 +1435,41 @@ exportReviewButton.addEventListener("click", () => {
   }
 
   downloadReviewCsv();
+});
+
+saveBatchButton.addEventListener("click", async () => {
+  if (reviewRows.length === 0) {
+    return;
+  }
+
+  saveBatchButton.disabled = true;
+  saveBatchButton.textContent = "Saving...";
+
+  try {
+    const response = await fetch("/api/import-batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reporting_month: inferReportingMonth(reviewRows),
+        original_file_names: latestOriginalFileNames,
+        rows: reviewRows,
+      }),
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.ok) {
+      renderReviewSaveNotice("error", result.error || "The reviewed batch could not be saved.");
+      return;
+    }
+
+    renderReviewSaveNotice("success", "Saved reviewed batch " + result.import_batch_id + " with " + result.invoice_count + " transaction" + plural(result.invoice_count) + ".");
+  } catch (error) {
+    renderReviewSaveNotice("error", "The reviewed batch could not be saved.");
+    console.error(error);
+  } finally {
+    saveBatchButton.disabled = reviewRows.length === 0;
+    saveBatchButton.textContent = "Save reviewed batch";
+  }
 });
 
 checkButton.addEventListener("click", async () => {
@@ -1514,6 +1616,7 @@ function validateFile(file, slot) {
 function renderFileSummary(items) {
   renderClassificationSummary();
   resetReviewScreen();
+  latestOriginalFileNames = items.filter((item) => !item.missing).map((item) => item.fileName);
   summaryBody.innerHTML = items.map((item) => {
     const badgeClass = item.missing ? " muted" : item.passed ? "" : " error";
     const statusText = item.missing ? item.status : item.status + (item.message ? ": " + item.message : "");
@@ -1565,6 +1668,10 @@ function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
+  latestOriginalFileNames = [
+    ...(result.files || []).map((file) => file.file_name).filter(Boolean),
+    ...pdfSummaries.map((file) => file.fileName).filter(Boolean),
+  ];
   renderClassificationSummary(result.classification_summary);
   renderReconciliation(result.reconciliation || []);
   initialiseReviewRows(rows);
@@ -1631,6 +1738,9 @@ function initialiseReviewRows(rows) {
   }
 
   exportReviewButton.disabled = reviewRows.length === 0;
+  saveBatchButton.disabled = reviewRows.length === 0;
+  reviewSaveNotice.className = "notice";
+  reviewSaveNotice.textContent = "";
   reviewIntro.textContent = reviewRows.length === 0
     ? "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export."
     : reviewRows.length + " transaction" + plural(reviewRows.length) + " ready for review. Import candidates are included by default; storage and review rows are not.";
@@ -1644,6 +1754,10 @@ function resetReviewScreen() {
     filterButton.classList.toggle("active", filterButton.dataset.filter === "all");
   }
   exportReviewButton.disabled = true;
+  saveBatchButton.disabled = true;
+  latestOriginalFileNames = [];
+  reviewSaveNotice.className = "notice";
+  reviewSaveNotice.textContent = "";
   reviewIntro.textContent = "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.";
   renderReviewTotals();
   reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>';
@@ -1815,6 +1929,16 @@ function downloadReviewCsv() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function renderReviewSaveNotice(state, message) {
+  reviewSaveNotice.className = "notice show " + state;
+  reviewSaveNotice.textContent = message;
+}
+
+function inferReportingMonth(rows) {
+  const firstDate = rows.map((row) => row.date).find(Boolean);
+  return firstDate ? String(firstDate).slice(0, 7) : null;
 }
 
 function renderClassificationSummary(summary) {
