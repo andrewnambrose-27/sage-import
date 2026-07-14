@@ -59,6 +59,16 @@ npm run deploy
 
 If this is deployed on Vercel instead, add an environment variable named `APP_ACCESS_PASSWORD` in the Vercel project settings before deploying.
 
+## Cloudflare Pages Live Check
+
+If this repository is connected to Cloudflare Pages as a static site, use:
+
+- Framework preset: `None`
+- Build command: leave blank
+- Build output directory: `/`
+
+The root `index.html` file is a simple live-check page for confirming that `sage-import.27tools.co` is serving the repository.
+
 ## Important MVP Notes
 
 - Do not commit real Removals Manager CSV exports. `*.csv` is ignored by git.
