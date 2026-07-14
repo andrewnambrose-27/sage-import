@@ -617,6 +617,57 @@ function uploadPage(): string {
             </table>
           </div>
         </section>
+
+        <section class="results-panel review-panel" aria-live="polite">
+          <div class="section-heading">
+            <div>
+              <h2>Review transactions</h2>
+              <p id="reviewIntro">This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.</p>
+            </div>
+            <div class="button-row">
+              <button id="exportReviewButton" class="secondary-button" type="button" disabled>Export review CSV</button>
+            </div>
+          </div>
+          <div id="reviewFilters" class="filter-row" aria-label="Review filters">
+            <button type="button" class="filter-button active" data-filter="all">All</button>
+            <button type="button" class="filter-button" data-filter="import_candidates">Import candidates</button>
+            <button type="button" class="filter-button" data-filter="excluded_storage">Excluded storage</button>
+            <button type="button" class="filter-button" data-filter="needs_review">Needs review</button>
+            <button type="button" class="filter-button" data-filter="mismatches">Mismatches</button>
+            <button type="button" class="filter-button" data-filter="missing_customer">Missing customer</button>
+          </div>
+          <div id="reviewTotals" class="summary-cards review-totals">
+            <article><strong>0</strong><span>Included rows</span></article>
+            <article><strong>0.00</strong><span>Included net</span></article>
+            <article><strong>0.00</strong><span>Included VAT</span></article>
+            <article><strong>0.00</strong><span>Included gross</span></article>
+            <article><strong>0</strong><span>Review needed</span></article>
+            <article><strong>0</strong><span>Excluded rows</span></article>
+          </div>
+          <div class="table-wrap">
+            <table class="review-table">
+              <thead>
+                <tr>
+                  <th>Invoice</th>
+                  <th>Date</th>
+                  <th>Customer</th>
+                  <th>Source file type</th>
+                  <th>Service</th>
+                  <th>Description</th>
+                  <th>Net</th>
+                  <th>VAT</th>
+                  <th>Gross</th>
+                  <th>Classification</th>
+                  <th>Warnings</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="reviewBody">
+                <tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </main>
       <script src="/assets/app.js" defer></script>
     `,
@@ -972,6 +1023,10 @@ h2 {
   margin-bottom: 18px;
 }
 
+.review-totals {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .summary-cards article {
   min-height: 82px;
   padding: 12px;
@@ -998,6 +1053,29 @@ h2 {
   justify-content: space-between;
   gap: 18px;
   margin-bottom: 18px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.filter-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.filter-button:hover,
+.filter-button.active {
+  border-color: rgba(15, 107, 91, 0.4);
+  background: rgba(15, 107, 91, 0.1);
+  color: var(--sage-dark);
 }
 
 .notice {
@@ -1040,6 +1118,10 @@ table {
   background: #ffffff;
 }
 
+.review-table {
+  min-width: 1320px;
+}
+
 th,
 td {
   padding: 12px 14px;
@@ -1059,6 +1141,14 @@ th {
 
 tbody tr:last-child td {
   border-bottom: 0;
+}
+
+tr.risky-row {
+  background: rgba(166, 83, 25, 0.05);
+}
+
+tr.risky-row.high-risk {
+  background: rgba(155, 28, 49, 0.06);
 }
 
 .badge {
@@ -1085,6 +1175,27 @@ tbody tr:last-child td {
 
 .badge.muted {
   background: #edf2f1;
+  color: var(--muted);
+}
+
+.action-select {
+  width: 100%;
+  min-width: 150px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+}
+
+.action-select:disabled {
+  color: var(--muted);
+  background: #edf2f1;
+}
+
+.cell-muted {
   color: var(--muted);
 }
 
@@ -1128,6 +1239,11 @@ tbody tr:last-child td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .filter-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .status-stack {
     min-width: 0;
   }
@@ -1153,8 +1269,15 @@ const reconciliationBody = document.querySelector("#reconciliationBody");
 const reconciliationIntro = document.querySelector("#reconciliationIntro");
 const clearButton = document.querySelector("#clearButton");
 const checkButton = document.querySelector("#checkButton");
+const reviewBody = document.querySelector("#reviewBody");
+const reviewIntro = document.querySelector("#reviewIntro");
+const reviewFilters = document.querySelector("#reviewFilters");
+const reviewTotals = document.querySelector("#reviewTotals");
+const exportReviewButton = document.querySelector("#exportReviewButton");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
+let reviewRows = [];
+let activeReviewFilter = "all";
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -1211,6 +1334,42 @@ for (const slot of uploadSlots) {
   input.addEventListener("change", () => updateFieldMessage(slot));
 }
 
+reviewFilters.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-filter]") : null;
+  if (!button) {
+    return;
+  }
+
+  activeReviewFilter = button.dataset.filter;
+  for (const filterButton of reviewFilters.querySelectorAll("[data-filter]")) {
+    filterButton.classList.toggle("active", filterButton === button);
+  }
+  renderReviewTable();
+});
+
+reviewBody.addEventListener("change", (event) => {
+  const select = event.target instanceof Element ? event.target.closest("[data-review-action]") : null;
+  if (!select) {
+    return;
+  }
+
+  const row = reviewRows.find((item) => item.review_id === select.dataset.reviewAction);
+  if (!row) {
+    return;
+  }
+
+  row.review_decision = select.value;
+  renderReviewTotals();
+});
+
+exportReviewButton.addEventListener("click", () => {
+  if (reviewRows.length === 0) {
+    return;
+  }
+
+  downloadReviewCsv();
+});
+
 checkButton.addEventListener("click", async () => {
   checkButton.disabled = true;
   checkButton.textContent = "Checking...";
@@ -1226,6 +1385,7 @@ checkButton.addEventListener("click", async () => {
       renderNotice("error", "No files selected. Add any exports or PDFs you have, then check again.");
       renderEmpty("No files checked yet.");
       renderReconciliationEmpty("No reconciliation run yet.");
+      resetReviewScreen();
       resultsIntro.textContent = "Nothing has been selected yet.";
       reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
       return;
@@ -1235,6 +1395,7 @@ checkButton.addEventListener("click", async () => {
       renderNotice("error", failedItems.length + " selected file" + plural(failedItems.length) + " need" + (failedItems.length === 1 ? "s" : "") + " attention before parsing.");
       renderFileSummary(summaries);
       renderReconciliationEmpty("Fix file warnings before reconciliation.");
+      resetReviewScreen();
       resultsIntro.textContent = "Fix the file type or size warnings before parsing CSV rows.";
       reconciliationIntro.textContent = "Reconciliation will run after the selected files pass basic checks.";
       return;
@@ -1247,6 +1408,7 @@ checkButton.addEventListener("click", async () => {
       renderNotice("success", pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed the basic checks. Add a CSV export when you are ready to parse rows.");
       renderFileSummary(summaries);
       renderReconciliationEmpty("Add a CSV export before reconciliation.");
+      resetReviewScreen();
       resultsIntro.textContent = "PDFs are not parsed in this step.";
       reconciliationIntro.textContent = "Reconciliation needs at least one CSV export and the monthly invoice report PDF.";
       return;
@@ -1257,6 +1419,7 @@ checkButton.addEventListener("click", async () => {
   } catch (error) {
     renderNotice("error", "The CSV files could not be parsed. Please try again or check the exports.");
     renderEmpty("Parsing failed.");
+    resetReviewScreen();
     console.error(error);
   } finally {
     checkButton.disabled = false;
@@ -1274,6 +1437,7 @@ clearButton.addEventListener("click", () => {
   renderClassificationSummary();
   renderEmpty("No files checked yet.");
   renderReconciliationEmpty("No reconciliation run yet.");
+  resetReviewScreen();
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
   reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
   clearButton.disabled = true;
@@ -1349,6 +1513,7 @@ function validateFile(file, slot) {
 
 function renderFileSummary(items) {
   renderClassificationSummary();
+  resetReviewScreen();
   summaryBody.innerHTML = items.map((item) => {
     const badgeClass = item.missing ? " muted" : item.passed ? "" : " error";
     const statusText = item.missing ? item.status : item.status + (item.message ? ": " + item.message : "");
@@ -1402,10 +1567,12 @@ function renderParsedRows(result, pdfSummaries) {
   const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
   renderClassificationSummary(result.classification_summary);
   renderReconciliation(result.reconciliation || []);
+  initialiseReviewRows(rows);
 
   if (rows.length === 0) {
     renderNotice("error", "No CSV rows were found to parse." + pdfText);
     renderEmpty("No CSV rows found.");
+    resetReviewScreen();
     resultsIntro.textContent = "Bad or empty CSV files are not discarded, but there were no rows to show.";
     return;
   }
@@ -1441,6 +1608,213 @@ function renderParsedRows(result, pdfSummaries) {
   if (rows.length > 100) {
     summaryBody.insertAdjacentHTML("beforeend", '<tr><td colspan="13" class="empty-state">Showing first 100 rows only.</td></tr>');
   }
+}
+
+function initialiseReviewRows(rows) {
+  reviewRows = rows.map((row, index) => {
+    const classification = row.classification || "needs_review";
+    return {
+      ...row,
+      review_id: [
+        row.source_file || "file",
+        row.row_number || index + 1,
+        row.invoice_number || "no-invoice",
+        index,
+      ].join("::"),
+      review_decision: defaultReviewDecision(classification),
+    };
+  });
+
+  activeReviewFilter = "all";
+  for (const filterButton of reviewFilters.querySelectorAll("[data-filter]")) {
+    filterButton.classList.toggle("active", filterButton.dataset.filter === "all");
+  }
+
+  exportReviewButton.disabled = reviewRows.length === 0;
+  reviewIntro.textContent = reviewRows.length === 0
+    ? "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export."
+    : reviewRows.length + " transaction" + plural(reviewRows.length) + " ready for review. Import candidates are included by default; storage and review rows are not.";
+  renderReviewTable();
+}
+
+function resetReviewScreen() {
+  reviewRows = [];
+  activeReviewFilter = "all";
+  for (const filterButton of reviewFilters.querySelectorAll("[data-filter]")) {
+    filterButton.classList.toggle("active", filterButton.dataset.filter === "all");
+  }
+  exportReviewButton.disabled = true;
+  reviewIntro.textContent = "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.";
+  renderReviewTotals();
+  reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>';
+}
+
+function renderReviewTable() {
+  renderReviewTotals();
+
+  if (reviewRows.length === 0) {
+    reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>';
+    return;
+  }
+
+  const rows = reviewRows.filter(matchesActiveReviewFilter);
+  if (rows.length === 0) {
+    reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions match this filter.</td></tr>';
+    return;
+  }
+
+  reviewBody.innerHTML = rows.map((row) => {
+    const warnings = row.warnings.length > 0 ? row.warnings.join(" ") : "OK";
+    const riskClass = reviewRiskClass(row);
+    return '<tr class="' + riskClass + '">' +
+      tableCell(row.invoice_number || "-") +
+      tableCell(row.date || "-") +
+      tableCell(row.customer_name || "-") +
+      tableCell(formatTransactionType(row.transaction_type)) +
+      tableCell(row.service_type || "-") +
+      tableCell(row.description || "-") +
+      tableCell(formatMoney(row.amount)) +
+      tableCell(formatMoney(row.vat_amount)) +
+      tableCell(formatMoney(grossAmount(row))) +
+      '<td><span class="badge ' + badgeClassForClassification(row.classification) + '">' + escapeHtml(formatStatus(row.classification || "needs_review")) + "</span></td>" +
+      '<td><span class="badge' + (row.warnings.length > 0 ? " warning" : "") + '">' + escapeHtml(warnings) + "</span></td>" +
+      '<td>' + reviewActionSelect(row) + '</td>' +
+      "</tr>";
+  }).join("");
+}
+
+function renderReviewTotals() {
+  const included = reviewRows.filter((row) => row.review_decision === "include");
+  const includedNet = included.reduce((sum, row) => sum + numericAmount(row.amount), 0);
+  const includedVat = included.reduce((sum, row) => sum + numericAmount(row.vat_amount), 0);
+  const reviewNeeded = reviewRows.filter((row) => row.review_decision === "review").length;
+  const excluded = reviewRows.filter((row) => row.review_decision === "exclude").length;
+
+  reviewTotals.innerHTML = [
+    ["Included rows", included.length],
+    ["Included net", formatMoney(includedNet)],
+    ["Included VAT", formatMoney(includedVat)],
+    ["Included gross", formatMoney(includedNet + includedVat)],
+    ["Review needed", reviewNeeded],
+    ["Excluded rows", excluded],
+  ].map(([label, value]) => "<article><strong>" + escapeHtml(String(value)) + "</strong><span>" + escapeHtml(label) + "</span></article>").join("");
+}
+
+function matchesActiveReviewFilter(row) {
+  if (activeReviewFilter === "import_candidates") {
+    return row.classification === "import_candidate";
+  }
+
+  if (activeReviewFilter === "excluded_storage") {
+    return row.classification === "exclude_storage";
+  }
+
+  if (activeReviewFilter === "needs_review") {
+    return row.review_decision === "review" || isReviewClassification(row.classification);
+  }
+
+  if (activeReviewFilter === "mismatches") {
+    return row.classification === "amount_mismatch" || row.classification === "vat_mismatch" || row.pdf_match_status === "amount_mismatch" || row.pdf_match_status === "vat_mismatch";
+  }
+
+  if (activeReviewFilter === "missing_customer") {
+    return row.classification === "missing_customer" || !row.customer_name;
+  }
+
+  return true;
+}
+
+function reviewActionSelect(row) {
+  const storageLocked = row.classification === "exclude_storage";
+  const options = [
+    { value: "include", label: "Include", disabled: storageLocked },
+    { value: "exclude", label: "Exclude", disabled: false },
+    { value: "review", label: "Review needed", disabled: false },
+  ];
+
+  const optionHtml = options.map((option) => {
+    const selected = row.review_decision === option.value ? " selected" : "";
+    const disabled = option.disabled ? " disabled" : "";
+    return '<option value="' + option.value + '"' + selected + disabled + ">" + option.label + "</option>";
+  }).join("");
+
+  return '<select class="action-select" data-review-action="' + escapeHtml(row.review_id) + '"' + (storageLocked ? ' title="Storage rows are excluded by default."' : "") + ">" + optionHtml + "</select>";
+}
+
+function defaultReviewDecision(classification) {
+  if (classification === "import_candidate") {
+    return "include";
+  }
+
+  if (classification === "exclude_storage") {
+    return "exclude";
+  }
+
+  return "review";
+}
+
+function isReviewClassification(classification) {
+  return classification !== "import_candidate" && classification !== "exclude_storage";
+}
+
+function reviewRiskClass(row) {
+  const highRisk = row.classification === "amount_mismatch" || row.classification === "vat_mismatch" || row.classification === "exclude_storage";
+  const risky = highRisk ||
+    row.classification === "missing_customer" ||
+    row.classification === "possible_duplicate" ||
+    row.transaction_type === "deposit" ||
+    row.warnings.some((warning) => warning.toLowerCase().includes("overlap") || warning.toLowerCase().includes("duplicate"));
+
+  if (highRisk) {
+    return "risky-row high-risk";
+  }
+
+  return risky ? "risky-row" : "";
+}
+
+function downloadReviewCsv() {
+  const headers = [
+    "invoice_number",
+    "date",
+    "customer_name",
+    "source_file_type",
+    "source_file",
+    "service_type",
+    "description",
+    "net_amount",
+    "vat_amount",
+    "gross_amount",
+    "classification",
+    "manual_decision",
+    "included_in_report_totals",
+    "warnings",
+  ];
+  const csvRows = [headers, ...reviewRows.map((row) => [
+    row.invoice_number || "",
+    row.date || "",
+    row.customer_name || "",
+    formatTransactionType(row.transaction_type),
+    row.source_file || "",
+    row.service_type || "",
+    row.description || "",
+    moneyForCsv(row.amount),
+    moneyForCsv(row.vat_amount),
+    moneyForCsv(grossAmount(row)),
+    row.classification || "needs_review",
+    row.review_decision,
+    row.review_decision === "include" ? "yes" : "no",
+    row.warnings.join(" | "),
+  ])];
+  const csv = csvRows.map((row) => row.map(csvCell).join(",")).join("\\r\\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "sage-import-reconciliation-report.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderClassificationSummary(summary) {
@@ -1544,6 +1918,23 @@ function badgeClassForClassification(value) {
 
 function formatMoney(value) {
   return typeof value === "number" ? value.toFixed(2) : "-";
+}
+
+function numericAmount(value) {
+  return typeof value === "number" ? value : 0;
+}
+
+function grossAmount(row) {
+  return numericAmount(row.amount) + numericAmount(row.vat_amount);
+}
+
+function moneyForCsv(value) {
+  return typeof value === "number" ? value.toFixed(2) : "";
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return '"' + text.replaceAll('"', '""') + '"';
 }
 
 function getFiles(slot) {
