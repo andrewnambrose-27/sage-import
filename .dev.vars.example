@@ -1,1 +1,5 @@
 APP_ACCESS_PASSWORD=replace-with-a-strong-local-password
+SAGE_CLIENT_ID=replace-with-sage-client-id
+SAGE_REDIRECT_URI=http://127.0.0.1:8788/api/sage/callback
+SAGE_CLIENT_SECRET=replace-with-sage-client-secret
+SAGE_TOKEN_ENCRYPTION_KEY=replace-with-long-random-token-encryption-key

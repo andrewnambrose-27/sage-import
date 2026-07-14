@@ -2,7 +2,7 @@
 
 Private MVP for checking old Removals Manager CSV exports before they are prepared for Sage Business Cloud.
 
-This version does not connect to Sage. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings. Reviewed normalized records can be saved to Cloudflare D1, but uploaded CSV/PDF files are not stored permanently.
+This version can connect to Sage Business Cloud Accounting with read-only OAuth status checks. It does not create contacts, invoices or credit notes. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings. Reviewed normalized records can be saved to Cloudflare D1, but uploaded CSV/PDF files are not stored permanently.
 
 ## Features
 
@@ -22,6 +22,7 @@ This version does not connect to Sage. CSV exports are parsed in memory, normali
 - Preview table with row-level warnings
 - Review screen with manual include, exclude and review-needed decisions
 - Optional Cloudflare D1 persistence for reviewed normalized records and metadata
+- Read-only Sage Business Cloud Accounting OAuth connection status
 
 ## Local Setup
 
@@ -43,22 +44,53 @@ This version does not connect to Sage. CSV exports are parsed in memory, normali
    APP_ACCESS_PASSWORD=your-private-password
    ```
 
-4. Start the app:
+4. If testing Sage OAuth locally, also set:
+
+   ```bash
+   SAGE_CLIENT_ID=your-sage-client-id
+   SAGE_REDIRECT_URI=http://127.0.0.1:8788/api/sage/callback
+   SAGE_CLIENT_SECRET=your-sage-client-secret
+   SAGE_TOKEN_ENCRYPTION_KEY=a-long-random-secret-used-only-for-token-encryption
+   ```
+
+5. Start the app:
 
    ```bash
    npm run dev
    ```
 
-5. Open the local Wrangler URL and log in with the password from `.dev.vars`.
+6. Open the local Wrangler URL and log in with the password from `.dev.vars`.
 
 ## Production Secret
 
-For Cloudflare Pages, add the password as an environment variable/secret named `APP_ACCESS_PASSWORD`.
+For Cloudflare Pages, add these secrets:
 
-Using Wrangler:
+- `APP_ACCESS_PASSWORD`
+- `SAGE_CLIENT_SECRET`
+- `SAGE_TOKEN_ENCRYPTION_KEY`
+
+Add these non-secret configuration values:
+
+- `SAGE_CLIENT_ID`
+- `SAGE_REDIRECT_URI`
+
+For production, `SAGE_REDIRECT_URI` should usually be:
+
+```txt
+https://sage-import.27tools.co/api/sage/callback
+```
+
+Add the password using Wrangler:
 
 ```bash
 npx wrangler pages secret put APP_ACCESS_PASSWORD --project-name sage-import
+```
+
+Add the Sage secrets using Wrangler:
+
+```bash
+npx wrangler pages secret put SAGE_CLIENT_SECRET --project-name sage-import
+npx wrangler pages secret put SAGE_TOKEN_ENCRYPTION_KEY --project-name sage-import
 ```
 
 The private tool is available at `/upload`. The root `/` page is a public live-check page.
@@ -114,7 +146,19 @@ The initial migration lives at `migrations/0001_initial_d1_storage.sql` and crea
 - `sage_reference_mappings`
 - `sage_imports`
 
-Money is stored as integer minor units, for example pence, to avoid floating-point storage errors. OAuth token columns are present for a later Sage integration stage, but Sage API access is not implemented yet; tokens must be encrypted before anything is written to those columns.
+Money is stored as integer minor units, for example pence, to avoid floating-point storage errors. Sage OAuth tokens are encrypted with Web Crypto AES-GCM before they are stored in D1, and token values are never returned to the browser.
+
+## Sage OAuth
+
+The Sage connection is read-only at this stage. It uses Sage Business Cloud Accounting OAuth authorization code flow and the Sage Accounting API to identify the connected business. The app stores encrypted access and refresh tokens in D1 so future read-only Sage API calls can refresh access tokens server-side.
+
+Current hard-coded Sage endpoints live in `src/sage.ts`:
+
+- Authorization: `https://www.sageone.com/oauth2/auth/central`
+- Token: `https://oauth.accounting.sage.com/token`
+- Accounting API: `https://api.accounting.sage.com/v3.1`
+
+Do not add Sage write actions until the invoice/contact mapping screens are ready.
 
 ## Important MVP Notes
 
@@ -126,4 +170,4 @@ Money is stored as integer minor units, for example pence, to avoid floating-poi
 - Individual invoice PDFs are validated for type and size but are not parsed yet.
 - Rows marked `needs_review` or `exclude_storage` are not export-eligible by default.
 - The D1 save action stores normalized/reconciled row metadata, warnings and raw CSV row values for debugging, not the uploaded files.
-- Sage API/import integration is intentionally not included yet.
+- Sage invoice/contact/credit-note write integration is intentionally not included yet.

@@ -3,14 +3,32 @@ import { DuplicateSourceInvoiceError, createImportDatabase } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
+import {
+  D1SageConnectionStore,
+  SageTokenExchangeError,
+  createSageAuthorizationUrl,
+  encryptTokenPair,
+  exchangeAuthorizationCode,
+  expiryFromNow,
+  fetchConnectedBusiness,
+  safeStatusFromConnection,
+  validateOAuthCallbackInput,
+  type SageConnectionConfig,
+} from "../src/sage";
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
+  SAGE_CLIENT_ID?: string;
+  SAGE_CLIENT_SECRET?: string;
+  SAGE_REDIRECT_URI?: string;
+  SAGE_TOKEN_ENCRYPTION_KEY?: string;
   DB?: D1Database;
 }
 
 const SESSION_COOKIE = "sage_import_session";
+const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
+const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -62,6 +80,22 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/import-batches" && request.method === "POST") {
         return handleImportBatchSave(request, env);
+      }
+
+      if (url.pathname === "/api/sage/connect" && request.method === "GET") {
+        return handleSageConnect(request, env);
+      }
+
+      if (url.pathname === "/api/sage/callback" && request.method === "GET") {
+        return handleSageCallback(request, env);
+      }
+
+      if (url.pathname === "/api/sage/disconnect" && request.method === "POST") {
+        return handleSageDisconnect(env);
+      }
+
+      if (url.pathname === "/api/sage/status" && request.method === "GET") {
+        return handleSageStatus(env);
       }
 
       if ((url.pathname === "/" || url.pathname === "/dashboard" || url.pathname === "/upload") && request.method === "GET") {
@@ -197,6 +231,102 @@ async function handleImportBatchSave(request: Request, env: Env): Promise<Respon
   }
 }
 
+async function handleSageConnect(request: Request, env: Env): Promise<Response> {
+  const config = sageConfigFromEnv(env);
+  if (!config.ok) {
+    return jsonResponse({ ok: false, error: config.error }, 503);
+  }
+
+  const url = new URL(request.url);
+  const state = base64UrlFromBytes(crypto.getRandomValues(new Uint8Array(32)));
+  return redirect(createSageAuthorizationUrl(config.value, state), {
+    "Set-Cookie": createSageStateCookie(state, url.protocol === "https:"),
+  });
+}
+
+async function handleSageCallback(request: Request, env: Env): Promise<Response> {
+  const config = sageConfigFromEnv(env);
+  const url = new URL(request.url);
+  const secure = url.protocol === "https:";
+
+  if (!config.ok) {
+    return jsonResponse({ ok: false, error: config.error }, 503, {
+      "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+    });
+  }
+
+  if (!env.DB) {
+    return jsonResponse({ ok: false, error: "D1 database is not configured yet." }, 503, {
+      "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+    });
+  }
+
+  const expectedState = getCookie(request.headers.get("Cookie") ?? "", SAGE_OAUTH_STATE_COOKIE);
+  const returnedState = url.searchParams.get("state") ?? "";
+  const code = url.searchParams.get("code");
+  const validation = validateOAuthCallbackInput(expectedState, returnedState, code, constantTimeEqual);
+  if (!validation.ok) {
+    return jsonResponse({ ok: false, error: validation.error }, validation.status, {
+      "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+    });
+  }
+
+  try {
+    const tokens = await exchangeAuthorizationCode(config.value, validation.code);
+    const business = await fetchConnectedBusiness(tokens.access_token);
+    const encryptedTokens = await encryptTokenPair(tokens, config.value.tokenEncryptionKey);
+    const store = new D1SageConnectionStore(env.DB);
+    await store.saveConnection({
+      business,
+      encryptedTokens,
+      accessTokenExpiresAt: expiryFromNow(tokens.expires_in),
+      connectedAt: new Date().toISOString(),
+    });
+
+    return redirect("/upload?sage=connected", {
+      "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+    });
+  } catch (error) {
+    if (error instanceof SageTokenExchangeError) {
+      return jsonResponse({ ok: false, error: "Sage token exchange failed." }, 502, {
+        "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+      });
+    }
+
+    console.error("Sage OAuth callback failed", safeError(error));
+    return jsonResponse({ ok: false, error: "Sage could not be connected." }, 502, {
+      "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+    });
+  }
+}
+
+async function handleSageDisconnect(env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ ok: false, error: "D1 database is not configured yet." }, 503);
+  }
+
+  const store = new D1SageConnectionStore(env.DB);
+  await store.disconnectActive(new Date().toISOString());
+  return jsonResponse({ ok: true, connected: false });
+}
+
+async function handleSageStatus(env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({
+      connected: false,
+      business_display_name: null,
+      connected_at: null,
+      last_refreshed_at: null,
+      reauthorization_required: false,
+      storage_configured: false,
+    });
+  }
+
+  const store = new D1SageConnectionStore(env.DB);
+  const status = safeStatusFromConnection(await store.getActiveConnection());
+  return jsonResponse({ ...status, storage_configured: true });
+}
+
 async function handleLogin(request: Request, env: Env): Promise<Response> {
   const configuredPassword = env.APP_ACCESS_PASSWORD;
   const url = new URL(request.url);
@@ -272,8 +402,12 @@ async function createSessionCookie(secret: string, secure: boolean): Promise<str
 }
 
 function clearSessionCookie(secure: boolean): string {
+  return clearCookie(SESSION_COOKIE, secure);
+}
+
+function clearCookie(name: string, secure: boolean): string {
   const attributes = [
-    `${SESSION_COOKIE}=`,
+    `${name}=`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
@@ -285,6 +419,53 @@ function clearSessionCookie(secure: boolean): string {
   }
 
   return attributes.join("; ");
+}
+
+function createSageStateCookie(state: string, secure: boolean): string {
+  const attributes = [
+    `${SAGE_OAUTH_STATE_COOKIE}=${state}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${SAGE_STATE_TTL_SECONDS}`,
+  ];
+
+  if (secure) {
+    attributes.push("Secure");
+  }
+
+  return attributes.join("; ");
+}
+
+function sageConfigFromEnv(env: Env): { ok: true; value: SageConnectionConfig } | { ok: false; error: string } {
+  const clientId = env.SAGE_CLIENT_ID;
+  const clientSecret = env.SAGE_CLIENT_SECRET;
+  const redirectUri = env.SAGE_REDIRECT_URI;
+  const tokenEncryptionKey = env.SAGE_TOKEN_ENCRYPTION_KEY;
+
+  if (!clientId || !clientSecret || !redirectUri || !tokenEncryptionKey) {
+    return {
+      ok: false,
+      error: "Sage OAuth is not configured. Set SAGE_CLIENT_ID, SAGE_REDIRECT_URI, SAGE_CLIENT_SECRET and SAGE_TOKEN_ENCRYPTION_KEY.",
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      clientId,
+      clientSecret,
+      redirectUri,
+      tokenEncryptionKey,
+    },
+  };
+}
+
+function safeError(error: unknown): Record<string, string> {
+  return {
+    name: error instanceof Error ? error.name : "Error",
+    message: error instanceof Error ? error.message : "Unknown error",
+  };
 }
 
 async function sign(value: string, secret: string): Promise<string> {
@@ -384,12 +565,13 @@ function textResponse(body: string, contentType: string): Response {
   });
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       ...securityHeaders,
+      ...headers,
     },
   });
 }
@@ -531,6 +713,19 @@ function uploadPage(): string {
             <span>Optional files</span>
             <span>No file storage</span>
           </div>
+        </section>
+
+        <section class="sage-card" aria-labelledby="sage-title">
+          <div>
+            <p class="eyebrow">Sage connection</p>
+            <h2 id="sage-title">Business Cloud Accounting</h2>
+            <p id="sageStatusText">Checking Sage connection status...</p>
+          </div>
+          <div class="sage-actions">
+            <a id="sageConnectLink" class="button-link" href="/api/sage/connect">Connect Sage</a>
+            <button id="sageDisconnectButton" class="secondary-button" type="button" disabled>Disconnect Sage</button>
+          </div>
+          <p class="sage-note">Read-only connection stage. This app will not create contacts, invoices or credit notes yet.</p>
         </section>
 
         <section class="upload-workflow" aria-labelledby="upload-title">
@@ -952,6 +1147,7 @@ h2 {
 }
 
 .hero-panel,
+.sage-card,
 .upload-workflow,
 .results-panel {
   border: 1px solid var(--line);
@@ -994,9 +1190,54 @@ h2 {
 }
 
 .upload-workflow,
+.sage-card,
 .results-panel {
   margin-top: 18px;
   padding: 22px;
+}
+
+.sage-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.sage-card p {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.sage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 15px;
+  border-radius: 8px;
+  background: var(--sage);
+  color: #ffffff;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.button-link:hover {
+  background: var(--sage-dark);
+}
+
+.sage-note {
+  grid-column: 1 / -1;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-weight: 700;
 }
 
 .button-row {
@@ -1285,6 +1526,7 @@ tr.risky-row.high-risk {
 @media (max-width: 820px) {
   .topbar,
   .section-heading,
+  .sage-card,
   .hero-panel {
     grid-template-columns: 1fr;
   }
@@ -1317,6 +1559,8 @@ tr.risky-row.high-risk {
   }
 
   .file-card label,
+  .sage-actions .button-link,
+  .sage-actions button,
   .button-row button {
     width: 100%;
   }
@@ -1340,6 +1584,9 @@ const reviewTotals = document.querySelector("#reviewTotals");
 const exportReviewButton = document.querySelector("#exportReviewButton");
 const saveBatchButton = document.querySelector("#saveBatchButton");
 const reviewSaveNotice = document.querySelector("#reviewSaveNotice");
+const sageStatusText = document.querySelector("#sageStatusText");
+const sageConnectLink = document.querySelector("#sageConnectLink");
+const sageDisconnectButton = document.querySelector("#sageDisconnectButton");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
 let reviewRows = [];
@@ -1400,6 +1647,8 @@ for (const slot of uploadSlots) {
   const input = document.querySelector("#" + slot.id);
   input.addEventListener("change", () => updateFieldMessage(slot));
 }
+
+loadSageStatus();
 
 reviewFilters.addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("[data-filter]") : null;
@@ -1469,6 +1718,25 @@ saveBatchButton.addEventListener("click", async () => {
   } finally {
     saveBatchButton.disabled = reviewRows.length === 0;
     saveBatchButton.textContent = "Save reviewed batch";
+  }
+});
+
+sageDisconnectButton.addEventListener("click", async () => {
+  sageDisconnectButton.disabled = true;
+  sageStatusText.textContent = "Disconnecting Sage...";
+
+  try {
+    const response = await fetch("/api/sage/disconnect", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      sageStatusText.textContent = result.error || "Sage could not be disconnected.";
+      return;
+    }
+
+    await loadSageStatus();
+  } catch (error) {
+    sageStatusText.textContent = "Sage could not be disconnected.";
+    console.error(error);
   }
 });
 
@@ -1934,6 +2202,43 @@ function downloadReviewCsv() {
 function renderReviewSaveNotice(state, message) {
   reviewSaveNotice.className = "notice show " + state;
   reviewSaveNotice.textContent = message;
+}
+
+async function loadSageStatus() {
+  try {
+    const response = await fetch("/api/sage/status");
+    const status = await response.json();
+
+    if (!response.ok) {
+      sageStatusText.textContent = status.error || "Sage status could not be loaded.";
+      sageConnectLink.textContent = "Connect Sage";
+      sageDisconnectButton.disabled = true;
+      return;
+    }
+
+    if (!status.storage_configured) {
+      sageStatusText.textContent = "D1 is not configured yet, so Sage cannot be connected.";
+      sageConnectLink.textContent = "Connect Sage";
+      sageDisconnectButton.disabled = true;
+      return;
+    }
+
+    if (status.connected) {
+      const suffix = status.reauthorization_required ? " Reconnection is required." : "";
+      sageStatusText.textContent = "Connected to " + status.business_display_name + "." + suffix;
+      sageConnectLink.textContent = status.reauthorization_required ? "Reconnect Sage" : "Reconnect Sage";
+      sageDisconnectButton.disabled = false;
+      return;
+    }
+
+    sageStatusText.textContent = "Sage is not connected.";
+    sageConnectLink.textContent = "Connect Sage";
+    sageDisconnectButton.disabled = true;
+  } catch (error) {
+    sageStatusText.textContent = "Sage status could not be loaded.";
+    sageDisconnectButton.disabled = true;
+    console.error(error);
+  }
 }
 
 function inferReportingMonth(rows) {
