@@ -1,4 +1,4 @@
-import { parseRemovalsCsv, type TransactionType } from "./removalsParser";
+import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
@@ -8,10 +8,11 @@ const SESSION_COOKIE = "sage_import_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const encoder = new TextEncoder();
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    try {
-      const url = new URL(request.url);
+export const onRequest: PagesFunction<Env> = async (context) => {
+  const { request, env } = context;
+
+  try {
+    const url = new URL(request.url);
 
       if (url.pathname === "/assets/styles.css") {
         return textResponse(stylesCss, "text/css; charset=utf-8");
@@ -25,9 +26,13 @@ export default {
         return htmlResponse(liveCheckPage());
       }
 
+    if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") {
+      return context.next();
+    }
+
       if (url.pathname === "/login" && request.method === "GET") {
         if (await isAuthenticated(request, env)) {
-          return redirect("/");
+          return redirect("/upload");
         }
         return htmlResponse(loginPage());
       }
@@ -54,12 +59,11 @@ export default {
         return htmlResponse(uploadPage());
       }
 
-      return htmlResponse(notFoundPage(), 404);
-    } catch (error) {
-      console.error(error);
-      return htmlResponse(errorPage(), 500);
-    }
-  },
+    return context.next();
+  } catch (error) {
+    console.error(error);
+    return htmlResponse(errorPage(), 500);
+  }
 };
 
 async function handleCsvParse(request: Request): Promise<Response> {
@@ -135,7 +139,7 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   }
 
   const cookie = await createSessionCookie(configuredPassword, url.protocol === "https:");
-  return redirect("/", {
+  return redirect("/upload", {
     "Set-Cookie": cookie,
   });
 }

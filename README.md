@@ -47,29 +47,31 @@ This first version does not connect to Sage and does not permanently store uploa
 
 ## Production Secret
 
-For Cloudflare Workers, add the password as a Worker secret:
+For Cloudflare Pages, add the password as an environment variable/secret named `APP_ACCESS_PASSWORD`.
+
+Using Wrangler:
 
 ```bash
-npx wrangler secret put APP_ACCESS_PASSWORD
+npx wrangler pages secret put APP_ACCESS_PASSWORD --project-name sage-import
 ```
 
-Then deploy:
+The private tool is available at `/upload`. The root `/` page is a public live-check page.
+
+For manual deploys:
 
 ```bash
 npm run deploy
 ```
 
-If this is deployed on Vercel instead, add an environment variable named `APP_ACCESS_PASSWORD` in the Vercel project settings before deploying.
+## Cloudflare Pages Settings
 
-## Cloudflare Pages Live Check
-
-If this repository is connected to Cloudflare Pages as a static site, use:
+Use these build settings:
 
 - Framework preset: `None`
 - Build command: leave blank
 - Build output directory: `/`
 
-The root `index.html` file is a simple live-check page for confirming that `sage-import.27tools.co` is serving the repository.
+The root `index.html` file is a simple live-check page for confirming that `sage-import.27tools.co` is serving the repository. Dynamic login, upload and CSV parsing routes run through Cloudflare Pages Functions in `functions/[[path]].ts`.
 
 ## Important MVP Notes
 

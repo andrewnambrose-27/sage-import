@@ -5,8 +5,8 @@
   "description": "Private MVP for checking Removals Manager CSV exports before Sage import.",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler pages dev .",
+    "deploy": "wrangler pages deploy . --project-name sage-import",
     "check": "tsc --noEmit",
     "test": "vitest run"
   },
