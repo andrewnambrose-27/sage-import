@@ -1,4 +1,13 @@
 export type TransactionType = "removal" | "deposit" | "ad_hoc" | "credit_note";
+export type TransactionClassification =
+  | "import_candidate"
+  | "exclude_storage"
+  | "needs_review"
+  | "possible_duplicate"
+  | "possible_storage_credit"
+  | "missing_customer"
+  | "amount_mismatch"
+  | "vat_mismatch";
 
 export interface NormalizedTransaction {
   transaction_type: TransactionType;
@@ -19,6 +28,9 @@ export interface NormalizedTransaction {
   customer_name?: string;
   service_type?: string;
   pdf_match_status?: string;
+  classification?: TransactionClassification;
+  classification_reasons?: string[];
+  export_allowed_by_default?: boolean;
   warnings: string[];
 }
 

@@ -1,3 +1,4 @@
+import { classifyTransactions } from "../src/classification";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
@@ -119,16 +120,21 @@ async function handleCsvParse(request: Request): Promise<Response> {
   const reconciliationResult = pdfRows.length > 0
     ? reconcileTransactionsWithPdf(rows, pdfRows)
     : { transactions: rows, pdf_rows: [], reconciliation: [] };
+  const classificationResult = classifyTransactions(
+    reconciliationResult.transactions,
+    reconciliationResult.reconciliation,
+  );
 
   return jsonResponse({
     files: parsedFiles,
-    rows: reconciliationResult.transactions,
+    rows: classificationResult.transactions,
     pdf_rows: reconciliationResult.pdf_rows,
     reconciliation: reconciliationResult.reconciliation,
+    classification_summary: classificationResult.summary,
     totals: {
       files: parsedFiles.length,
-      rows: reconciliationResult.transactions.length,
-      rows_with_warnings: reconciliationResult.transactions.filter((row) => row.warnings.length > 0).length,
+      rows: classificationResult.transactions.length,
+      rows_with_warnings: classificationResult.transactions.filter((row) => row.warnings.length > 0).length,
       pdf_rows: reconciliationResult.pdf_rows.length,
       reconciliation_rows: reconciliationResult.reconciliation.length,
     },
@@ -548,6 +554,15 @@ function uploadPage(): string {
             </div>
           </div>
           <div id="summaryNotice" class="notice"></div>
+          <div id="classificationSummary" class="summary-cards compact">
+            <article><strong>0</strong><span>Total rows</span></article>
+            <article><strong>0</strong><span>Import candidates</span></article>
+            <article><strong>0</strong><span>Excluded storage</span></article>
+            <article><strong>0</strong><span>Needs review</span></article>
+            <article><strong>0</strong><span>Duplicate warnings</span></article>
+            <article><strong>0.00</strong><span>Candidate value</span></article>
+            <article><strong>0.00</strong><span>Excluded value</span></article>
+          </div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -562,11 +577,13 @@ function uploadPage(): string {
                   <th>Service</th>
                   <th>Amount</th>
                   <th>VAT</th>
+                  <th>Classification</th>
+                  <th>Default export</th>
                   <th>Warnings</th>
                 </tr>
               </thead>
               <tbody id="summaryBody">
-                <tr><td colspan="11" class="empty-state">No files checked yet.</td></tr>
+                <tr><td colspan="13" class="empty-state">No files checked yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -948,6 +965,33 @@ h2 {
   color: var(--sage-dark);
 }
 
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.summary-cards article {
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.summary-cards strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 1.25rem;
+}
+
+.summary-cards span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-start;
@@ -1080,6 +1124,10 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .status-stack {
     min-width: 0;
   }
@@ -1099,6 +1147,7 @@ const appJs = String.raw`
 const uploadForm = document.querySelector("#uploadForm");
 const summaryBody = document.querySelector("#summaryBody");
 const summaryNotice = document.querySelector("#summaryNotice");
+const classificationSummary = document.querySelector("#classificationSummary");
 const resultsIntro = document.querySelector("#resultsIntro");
 const reconciliationBody = document.querySelector("#reconciliationBody");
 const reconciliationIntro = document.querySelector("#reconciliationIntro");
@@ -1222,6 +1271,7 @@ clearButton.addEventListener("click", () => {
   }
   summaryNotice.className = "notice";
   summaryNotice.textContent = "";
+  renderClassificationSummary();
   renderEmpty("No files checked yet.");
   renderReconciliationEmpty("No reconciliation run yet.");
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
@@ -1298,6 +1348,7 @@ function validateFile(file, slot) {
 }
 
 function renderFileSummary(items) {
+  renderClassificationSummary();
   summaryBody.innerHTML = items.map((item) => {
     const badgeClass = item.missing ? " muted" : item.passed ? "" : " error";
     const statusText = item.missing ? item.status : item.status + (item.message ? ": " + item.message : "");
@@ -1311,6 +1362,8 @@ function renderFileSummary(items) {
       tableCell("-") +
       tableCell("-") +
       tableCell(item.size) +
+      tableCell("-") +
+      tableCell("-") +
       tableCell("-") +
       '<td><span class="badge' + badgeClass + '">' + escapeHtml(statusText) + "</span></td>" +
       "</tr>";
@@ -1347,6 +1400,7 @@ function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
+  renderClassificationSummary(result.classification_summary);
   renderReconciliation(result.reconciliation || []);
 
   if (rows.length === 0) {
@@ -1378,13 +1432,37 @@ function renderParsedRows(result, pdfSummaries) {
       tableCell(row.service_type || "-") +
       tableCell(formatMoney(row.amount)) +
       tableCell(formatMoney(row.vat_amount)) +
+      '<td><span class="badge ' + badgeClassForClassification(row.classification) + '">' + escapeHtml(formatStatus(row.classification || "needs_review")) + "</span></td>" +
+      tableCell(row.export_allowed_by_default ? "Included" : "Not included") +
       '<td><span class="badge' + badgeClass + '">' + escapeHtml(warnings) + "</span></td>" +
       "</tr>";
   }).join("");
 
   if (rows.length > 100) {
-    summaryBody.insertAdjacentHTML("beforeend", '<tr><td colspan="11" class="empty-state">Showing first 100 rows only.</td></tr>');
+    summaryBody.insertAdjacentHTML("beforeend", '<tr><td colspan="13" class="empty-state">Showing first 100 rows only.</td></tr>');
   }
+}
+
+function renderClassificationSummary(summary) {
+  const values = summary || {
+    total_rows_uploaded: 0,
+    import_candidates: 0,
+    excluded_storage_rows: 0,
+    needs_review_rows: 0,
+    duplicate_warnings: 0,
+    total_import_candidate_value: 0,
+    total_excluded_value: 0,
+  };
+
+  classificationSummary.innerHTML = [
+    ["Total rows", values.total_rows_uploaded],
+    ["Import candidates", values.import_candidates],
+    ["Excluded storage", values.excluded_storage_rows],
+    ["Needs review", values.needs_review_rows],
+    ["Duplicate warnings", values.duplicate_warnings],
+    ["Candidate value", formatMoney(values.total_import_candidate_value)],
+    ["Excluded value", formatMoney(values.total_excluded_value)],
+  ].map(([label, value]) => "<article><strong>" + escapeHtml(String(value)) + "</strong><span>" + escapeHtml(label) + "</span></article>").join("");
 }
 
 function renderReconciliation(rows) {
@@ -1441,7 +1519,7 @@ function renderNotice(state, message) {
 }
 
 function renderEmpty(message) {
-  summaryBody.innerHTML = '<tr><td colspan="11" class="empty-state">' + escapeHtml(message) + "</td></tr>";
+  summaryBody.innerHTML = '<tr><td colspan="13" class="empty-state">' + escapeHtml(message) + "</td></tr>";
 }
 
 function formatTransactionType(value) {
@@ -1450,6 +1528,18 @@ function formatTransactionType(value) {
 
 function formatStatus(value) {
   return String(value).replaceAll("_", " ");
+}
+
+function badgeClassForClassification(value) {
+  if (value === "import_candidate") {
+    return "";
+  }
+
+  if (value === "exclude_storage" || value === "amount_mismatch" || value === "vat_mismatch") {
+    return "error";
+  }
+
+  return "warning";
 }
 
 function formatMoney(value) {

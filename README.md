@@ -17,6 +17,8 @@ This first version does not connect to Sage and does not permanently store uploa
 - Normalised invoice numbers, dates, amounts and VAT values
 - Monthly invoice report PDF text extraction and invoice-level reconciliation
 - Customer names and service types matched from the monthly PDF where possible
+- Configurable transaction classification rules
+- Import-candidate, storage-exclusion, duplicate, mismatch and review summaries
 - Preview table with row-level warnings
 
 ## Local Setup
@@ -83,4 +85,5 @@ The root `index.html` file is a simple live-check page for confirming that `sage
 - CSV files are processed in memory only and are not stored permanently.
 - The monthly invoice report PDF is read in memory for reconciliation only.
 - Individual invoice PDFs are validated for type and size but are not parsed yet.
+- Rows marked `needs_review` or `exclude_storage` are not export-eligible by default.
 - Sage API/import integration is intentionally not included yet.
