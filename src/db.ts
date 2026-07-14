@@ -3,6 +3,12 @@ import type {
   TransactionClassification,
   TransactionType,
 } from "./removalsParser";
+import type {
+  CustomerMapping,
+  SageReferenceEntry,
+  SageReferenceMapping,
+  SageReferenceType,
+} from "./sageMappings";
 
 export type ReviewDecision = "include" | "exclude" | "review";
 export type ImportBatchStatus = "reviewed" | "saved" | "sage_pending" | "sage_created" | "failed";
@@ -157,6 +163,168 @@ export class ImportDatabase {
 
     return { batch, invoices };
   }
+
+  async replaceSageReferenceCache(referenceType: SageReferenceType, entries: SageReferenceEntry[], refreshedAt = new Date().toISOString()): Promise<void> {
+    const statements = [
+      this.db.prepare("DELETE FROM sage_reference_cache WHERE reference_type = ?").bind(referenceType),
+      ...entries.map((entry) => this.db.prepare(
+        `INSERT INTO sage_reference_cache (
+          id, reference_type, sage_entity_id, source_code, sage_display_name,
+          is_active, raw_reference_json, refreshed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        createId(),
+        entry.reference_type,
+        entry.sage_entity_id,
+        entry.source_code,
+        entry.sage_display_name,
+        entry.is_active ? 1 : 0,
+        JSON.stringify(entry.raw),
+        refreshedAt,
+      )),
+    ];
+
+    await this.db.batch(statements);
+  }
+
+  async listSageReferenceCache(referenceType: SageReferenceType): Promise<SageReferenceEntry[]> {
+    const result = await this.db.prepare(
+      `SELECT reference_type, sage_entity_id, source_code, sage_display_name, is_active, raw_reference_json
+       FROM sage_reference_cache
+       WHERE reference_type = ?
+       ORDER BY sage_display_name`,
+    ).bind(referenceType).all<{
+      reference_type: SageReferenceType;
+      sage_entity_id: string;
+      source_code: string | null;
+      sage_display_name: string;
+      is_active: number;
+      raw_reference_json: string;
+    }>();
+
+    return (result.results ?? []).map((row) => ({
+      reference_type: row.reference_type,
+      sage_entity_id: row.sage_entity_id,
+      source_code: row.source_code,
+      sage_display_name: row.sage_display_name,
+      is_active: row.is_active === 1,
+      raw: JSON.parse(row.raw_reference_json) as Record<string, unknown>,
+    }));
+  }
+
+  async saveReferenceMapping(input: SageReferenceMapping): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO sage_reference_mappings (
+        id, mapping_type, source_code, source_context, sage_entity_id,
+        sage_display_name, manually_confirmed, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(mapping_type, source_code, source_context) DO UPDATE SET
+        sage_entity_id = excluded.sage_entity_id,
+        sage_display_name = excluded.sage_display_name,
+        manually_confirmed = excluded.manually_confirmed,
+        updated_at = excluded.updated_at`,
+    ).bind(
+      createId(),
+      input.mapping_type,
+      input.source_code,
+      input.source_context,
+      input.sage_entity_id,
+      input.sage_display_name,
+      input.manually_confirmed ? 1 : 0,
+      now,
+      now,
+    ).run();
+  }
+
+  async listReferenceMappings(mappingType?: SageReferenceType): Promise<SageReferenceMapping[]> {
+    const result = mappingType
+      ? await this.db.prepare(
+        `SELECT mapping_type, source_code, source_context, sage_entity_id, sage_display_name, manually_confirmed
+         FROM sage_reference_mappings
+         WHERE mapping_type = ?
+         ORDER BY source_context, source_code`,
+      ).bind(mappingType).all<SageReferenceMappingRow>()
+      : await this.db.prepare(
+        `SELECT mapping_type, source_code, source_context, sage_entity_id, sage_display_name, manually_confirmed
+         FROM sage_reference_mappings
+         ORDER BY mapping_type, source_context, source_code`,
+      ).all<SageReferenceMappingRow>();
+
+    return (result.results ?? []).map(referenceMappingFromRow);
+  }
+
+  async saveCustomerMapping(input: CustomerMapping): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.batch([
+      this.db.prepare(
+        `DELETE FROM customer_mappings
+         WHERE normalized_customer_name = ?
+           AND COALESCE(customer_email, '') = ?
+           AND COALESCE(postcode, '') = ?`,
+      ).bind(input.normalized_customer_name, input.customer_email ?? "", input.postcode ?? ""),
+      this.db.prepare(
+        `INSERT INTO customer_mappings (
+          id, normalized_customer_name, customer_email, postcode, sage_contact_id,
+          sage_contact_display_name, manually_confirmed, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        createId(),
+        input.normalized_customer_name,
+        input.customer_email,
+        input.postcode,
+        input.sage_contact_id,
+        input.sage_contact_display_name,
+        input.manually_confirmed ? 1 : 0,
+        now,
+        now,
+      ),
+    ]);
+  }
+
+  async listCustomerMappings(): Promise<CustomerMapping[]> {
+    const result = await this.db.prepare(
+      `SELECT normalized_customer_name, customer_email, postcode, sage_contact_id, sage_contact_display_name, manually_confirmed
+       FROM customer_mappings
+       ORDER BY normalized_customer_name`,
+    ).all<CustomerMappingRow>();
+
+    return (result.results ?? []).map(customerMappingFromRow);
+  }
+
+  async importedSourceInvoiceIds(sourceInvoiceIds: string[]): Promise<Set<string>> {
+    if (sourceInvoiceIds.length === 0) {
+      return new Set();
+    }
+
+    const placeholders = sourceInvoiceIds.map(() => "?").join(",");
+    const result = await this.db.prepare(
+      `SELECT source_invoice_id
+       FROM sage_imports
+       WHERE source_invoice_id IN (${placeholders})
+         AND import_status IN ('pending', 'created', 'uncertain')`,
+    ).bind(...sourceInvoiceIds).all<{ source_invoice_id: string }>();
+
+    return new Set((result.results ?? []).map((row) => row.source_invoice_id));
+  }
+}
+
+interface SageReferenceMappingRow {
+  mapping_type: SageReferenceType;
+  source_code: string;
+  source_context: string;
+  sage_entity_id: string;
+  sage_display_name: string;
+  manually_confirmed: number;
+}
+
+interface CustomerMappingRow {
+  normalized_customer_name: string;
+  customer_email: string | null;
+  postcode: string | null;
+  sage_contact_id: string;
+  sage_contact_display_name: string;
+  manually_confirmed: number;
 }
 
 export async function buildSourceInvoiceRecord(
@@ -269,6 +437,28 @@ function defaultReviewDecision(classification: TransactionClassification): Revie
 
 function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Error && /unique|constraint/i.test(error.message);
+}
+
+function referenceMappingFromRow(row: SageReferenceMappingRow): SageReferenceMapping {
+  return {
+    mapping_type: row.mapping_type,
+    source_code: row.source_code,
+    source_context: row.source_context,
+    sage_entity_id: row.sage_entity_id,
+    sage_display_name: row.sage_display_name,
+    manually_confirmed: row.manually_confirmed === 1,
+  };
+}
+
+function customerMappingFromRow(row: CustomerMappingRow): CustomerMapping {
+  return {
+    normalized_customer_name: row.normalized_customer_name,
+    customer_email: row.customer_email,
+    postcode: row.postcode,
+    sage_contact_id: row.sage_contact_id,
+    sage_contact_display_name: row.sage_contact_display_name,
+    manually_confirmed: row.manually_confirmed === 1,
+  };
 }
 
 function createId(): string {

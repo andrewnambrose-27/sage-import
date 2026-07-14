@@ -23,6 +23,8 @@ This version can connect to Sage Business Cloud Accounting with read-only OAuth 
 - Review screen with manual include, exclude and review-needed decisions
 - Optional Cloudflare D1 persistence for reviewed normalized records and metadata
 - Read-only Sage Business Cloud Accounting OAuth connection status
+- Read-only Sage tax-rate, ledger-account and contact lookup/mapping screens
+- Sage readiness status for reviewed invoices
 
 ## Local Setup
 
@@ -137,7 +139,13 @@ npx wrangler d1 migrations apply sage-import-db --remote
 
 For local Pages development, the `DB` binding must be available before the "Save reviewed batch" action will persist data. Without the binding, upload, parsing, reconciliation and review still work in memory.
 
-The initial migration lives at `migrations/0001_initial_d1_storage.sql` and creates:
+The migrations live in `migrations/`:
+
+- `0001_initial_d1_storage.sql`
+- `0002_sage_oauth_token_nonces.sql`
+- `0003_sage_reference_cache_and_mapping_context.sql`
+
+They create and extend:
 
 - `import_batches`
 - `source_invoices`
@@ -159,6 +167,18 @@ Current hard-coded Sage endpoints live in `src/sage.ts`:
 - Accounting API: `https://api.accounting.sage.com/v3.1`
 
 Do not add Sage write actions until the invoice/contact mapping screens are ready.
+
+## Sage Reference Mappings
+
+The mapping screens are still read-only against Sage. They can fetch and cache safe metadata for:
+
+- Sage tax rates
+- Sage ledger accounts
+- Sage contacts returned by manual search
+
+Confirmed mappings are stored in D1. The app deliberately does not assume that a Removals Manager tax code such as `T1` maps to any particular Sage tax rate, and it does not assume that an old nominal code such as `4010` maps to any particular Sage ledger account.
+
+An invoice is only marked `ready_for_sage` when it is included, not storage, not blocked by unresolved warnings/mismatches, has confirmed contact/tax/ledger mappings, and has not already been imported. The app still does not create Sage contacts, invoices or credit notes.
 
 ## Important MVP Notes
 

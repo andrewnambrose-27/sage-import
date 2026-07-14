@@ -1,20 +1,35 @@
 import { classifyTransactions } from "../src/classification";
-import { DuplicateSourceInvoiceError, createImportDatabase } from "../src/db";
+import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
 import {
   D1SageConnectionStore,
+  SageApiClient,
+  SageAuthorizationError,
   SageTokenExchangeError,
   createSageAuthorizationUrl,
   encryptTokenPair,
   exchangeAuthorizationCode,
   expiryFromNow,
   fetchConnectedBusiness,
+  fetchSageLedgerAccounts,
+  fetchSageTaxRates,
+  searchSageContacts,
   safeStatusFromConnection,
   validateOAuthCallbackInput,
   type SageConnectionConfig,
 } from "../src/sage";
+import {
+  activeReferenceEntries,
+  contactMatchStatus,
+  distinctLedgerCodes,
+  distinctTaxCodes,
+  parseSageContactItems,
+  parseSageReferenceItems,
+  readinessForInvoice,
+  type SageReferenceType,
+} from "../src/sageMappings";
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
@@ -96,6 +111,30 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/sage/status" && request.method === "GET") {
         return handleSageStatus(env);
+      }
+
+      if (url.pathname === "/api/sage/references" && request.method === "GET") {
+        return handleSageReferences(env);
+      }
+
+      if (url.pathname === "/api/sage/references/refresh" && request.method === "POST") {
+        return handleSageReferenceRefresh(env);
+      }
+
+      if (url.pathname === "/api/sage/reference-mappings" && request.method === "POST") {
+        return handleSageReferenceMappingSave(request, env);
+      }
+
+      if (url.pathname === "/api/sage/contacts/search" && request.method === "POST") {
+        return handleSageContactSearch(request, env);
+      }
+
+      if (url.pathname === "/api/sage/customer-mappings" && request.method === "POST") {
+        return handleSageCustomerMappingSave(request, env);
+      }
+
+      if (url.pathname === "/api/sage/readiness" && request.method === "POST") {
+        return handleSageReadiness(request, env);
       }
 
       if ((url.pathname === "/" || url.pathname === "/dashboard" || url.pathname === "/upload") && request.method === "GET") {
@@ -327,6 +366,215 @@ async function handleSageStatus(env: Env): Promise<Response> {
   return jsonResponse({ ...status, storage_configured: true });
 }
 
+async function handleSageReferences(env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const [taxRates, ledgerAccounts, taxMappings, ledgerMappings, customerMappings] = await Promise.all([
+    database.value.listSageReferenceCache("tax_rate"),
+    database.value.listSageReferenceCache("ledger_account"),
+    database.value.listReferenceMappings("tax_rate"),
+    database.value.listReferenceMappings("ledger_account"),
+    database.value.listCustomerMappings(),
+  ]);
+
+  return jsonResponse({
+    tax_rates: taxRates,
+    ledger_accounts: ledgerAccounts,
+    active_tax_rates: activeReferenceEntries(taxRates),
+    active_ledger_accounts: activeReferenceEntries(ledgerAccounts),
+    tax_mappings: taxMappings,
+    ledger_mappings: ledgerMappings,
+    customer_mappings: customerMappings,
+  });
+}
+
+async function handleSageReferenceRefresh(env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const client = sageClientFromEnv(env);
+  if (!client.ok) {
+    return jsonResponse(client.body, client.status);
+  }
+
+  try {
+    const [ledgerData, taxData] = await Promise.all([
+      fetchSageLedgerAccounts(client.value),
+      fetchSageTaxRates(client.value),
+    ]);
+    const ledgerAccounts = parseSageReferenceItems(ledgerData, "ledger_account");
+    const taxRates = parseSageReferenceItems(taxData, "tax_rate");
+    const now = new Date().toISOString();
+
+    await Promise.all([
+      database.value.replaceSageReferenceCache("ledger_account", ledgerAccounts, now),
+      database.value.replaceSageReferenceCache("tax_rate", taxRates, now),
+    ]);
+
+    return jsonResponse({
+      ok: true,
+      ledger_accounts: ledgerAccounts.length,
+      tax_rates: taxRates.length,
+      refreshed_at: now,
+    });
+  } catch (error) {
+    if (error instanceof SageAuthorizationError) {
+      return jsonResponse({ ok: false, error: "Reconnect Sage before refreshing reference data." }, 401);
+    }
+    console.error("Sage reference refresh failed", safeError(error));
+    return jsonResponse({ ok: false, error: "Sage reference data could not be refreshed." }, 502);
+  }
+}
+
+async function handleSageReferenceMappingSave(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const body = await request.json() as {
+    mapping_type?: SageReferenceType;
+    source_code?: string;
+    source_context?: string;
+    sage_entity_id?: string;
+    sage_display_name?: string;
+  };
+
+  if ((body.mapping_type !== "tax_rate" && body.mapping_type !== "ledger_account") || !body.source_code || !body.sage_entity_id || !body.sage_display_name) {
+    return jsonResponse({ ok: false, error: "Mapping details are incomplete." }, 400);
+  }
+
+  await database.value.saveReferenceMapping({
+    mapping_type: body.mapping_type,
+    source_code: body.source_code,
+    source_context: body.mapping_type === "ledger_account" ? String(body.source_context ?? "") : "",
+    sage_entity_id: body.sage_entity_id,
+    sage_display_name: body.sage_display_name,
+    manually_confirmed: true,
+  });
+
+  return jsonResponse({ ok: true });
+}
+
+async function handleSageContactSearch(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const client = sageClientFromEnv(env);
+  if (!client.ok) {
+    return jsonResponse(client.body, client.status);
+  }
+
+  const body = await request.json() as { customer_name?: string; normalized_customer_name?: string };
+  const customerName = String(body.customer_name ?? "").trim();
+  const normalizedCustomerName = String(body.normalized_customer_name ?? "").trim();
+  const searchTerm = customerName || normalizedCustomerName;
+
+  if (!searchTerm) {
+    return jsonResponse({ ok: false, error: "Customer name is required." }, 400);
+  }
+
+  try {
+    const [exactData, normalizedData, savedMappings] = await Promise.all([
+      searchSageContacts(client.value, customerName || normalizedCustomerName),
+      normalizedCustomerName && normalizedCustomerName !== customerName ? searchSageContacts(client.value, normalizedCustomerName) : Promise.resolve({ $items: [] }),
+      database.value.listCustomerMappings(),
+    ]);
+    const matchesById = new Map([
+      ...parseSageContactItems(exactData),
+      ...parseSageContactItems(normalizedData),
+    ].map((match) => [match.sage_contact_id, match]));
+    const matches = [...matchesById.values()];
+    const normalized = normalizedCustomerName || normalizeForClient(customerName);
+
+    return jsonResponse({
+      ok: true,
+      customer_name: customerName,
+      normalized_customer_name: normalized,
+      matches,
+      match_status: contactMatchStatus(normalized, matches),
+      saved_mapping: savedMappings.find((mapping) => mapping.normalized_customer_name === normalized) ?? null,
+      missing_contact_message: matches.length === 0 ? "Create or complete this customer in Sage, then refresh contacts." : null,
+    });
+  } catch (error) {
+    if (error instanceof SageAuthorizationError) {
+      return jsonResponse({ ok: false, error: "Reconnect Sage before searching contacts." }, 401);
+    }
+    console.error("Sage contact search failed", safeError(error));
+    return jsonResponse({ ok: false, error: "Sage contacts could not be searched." }, 502);
+  }
+}
+
+async function handleSageCustomerMappingSave(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const body = await request.json() as {
+    normalized_customer_name?: string;
+    customer_email?: string | null;
+    postcode?: string | null;
+    sage_contact_id?: string;
+    sage_contact_display_name?: string;
+  };
+
+  if (!body.normalized_customer_name || !body.sage_contact_id || !body.sage_contact_display_name) {
+    return jsonResponse({ ok: false, error: "Customer mapping details are incomplete." }, 400);
+  }
+
+  await database.value.saveCustomerMapping({
+    normalized_customer_name: body.normalized_customer_name,
+    customer_email: body.customer_email ?? null,
+    postcode: body.postcode ?? null,
+    sage_contact_id: body.sage_contact_id,
+    sage_contact_display_name: body.sage_contact_display_name,
+    manually_confirmed: true,
+  });
+
+  return jsonResponse({ ok: true });
+}
+
+async function handleSageReadiness(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const body = await request.json() as { rows?: Array<Record<string, unknown>> };
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  const [customerMappings, taxMappings, ledgerMappings, importedIds] = await Promise.all([
+    database.value.listCustomerMappings(),
+    database.value.listReferenceMappings("tax_rate"),
+    database.value.listReferenceMappings("ledger_account"),
+    database.value.importedSourceInvoiceIds(rows.map((row) => String(row.source_invoice_id ?? "")).filter(Boolean)),
+  ]);
+
+  const context = {
+    customerMappings,
+    taxMappings,
+    ledgerMappings,
+    importedSourceInvoiceIds: importedIds,
+  };
+
+  return jsonResponse({
+    ok: true,
+    readiness: rows.map((row, index) => ({
+      review_id: row.review_id ?? String(index),
+      status: readinessForInvoice(row as never, context),
+    })),
+    distinct_tax_codes: distinctTaxCodes(rows as never),
+    distinct_ledger_codes: distinctLedgerCodes(rows as never),
+  });
+}
+
 async function handleLogin(request: Request, env: Env): Promise<Response> {
   const configuredPassword = env.APP_ACCESS_PASSWORD;
   const url = new URL(request.url);
@@ -461,11 +709,51 @@ function sageConfigFromEnv(env: Env): { ok: true; value: SageConnectionConfig } 
   };
 }
 
+function databaseFromEnv(env: Env): { ok: true; value: ReturnType<typeof createImportDatabase> } | { ok: false; status: number; body: { ok: false; error: string } } {
+  if (!env.DB) {
+    return {
+      ok: false,
+      status: 503,
+      body: { ok: false, error: "D1 database is not configured yet." },
+    };
+  }
+
+  return { ok: true, value: createImportDatabase(env.DB) };
+}
+
+function sageClientFromEnv(env: Env): { ok: true; value: SageApiClient } | { ok: false; status: number; body: { ok: false; error: string } } {
+  if (!env.DB) {
+    return {
+      ok: false,
+      status: 503,
+      body: { ok: false, error: "D1 database is not configured yet." },
+    };
+  }
+
+  const config = sageConfigFromEnv(env);
+  if (!config.ok) {
+    return {
+      ok: false,
+      status: 503,
+      body: { ok: false, error: config.error },
+    };
+  }
+
+  return {
+    ok: true,
+    value: new SageApiClient(new D1SageConnectionStore(env.DB), config.value),
+  };
+}
+
 function safeError(error: unknown): Record<string, string> {
   return {
     name: error instanceof Error ? error.name : "Error",
     message: error instanceof Error ? error.message : "Unknown error",
   };
+}
+
+function normalizeForClient(value: string): string {
+  return normalizeCustomerName(value);
 }
 
 async function sign(value: string, secret: string): Promise<string> {
@@ -918,13 +1206,50 @@ function uploadPage(): string {
                   <th>Gross</th>
                   <th>Classification</th>
                   <th>Warnings</th>
+                  <th>Sage readiness</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody id="reviewBody">
-                <tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>
+                <tr><td colspan="13" class="empty-state">No transactions ready for review yet.</td></tr>
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section class="results-panel mapping-panel" aria-live="polite">
+          <div class="section-heading">
+            <div>
+              <h2>Sage mappings</h2>
+              <p id="mappingIntro">Map Removals Manager tax codes, nominal codes and customers to existing Sage records before any future Sage export.</p>
+            </div>
+            <div class="button-row">
+              <button id="refreshSageReferencesButton" class="secondary-button" type="button">Refresh Sage references</button>
+            </div>
+          </div>
+          <div id="mappingNotice" class="notice"></div>
+          <div class="mapping-grid">
+            <article>
+              <h3>Tax mappings</h3>
+              <p>Do not assume an old Removals Manager tax code matches a Sage tax rate. Choose and save each one.</p>
+              <div id="taxMappingBody" class="mapping-list">
+                <p class="empty-state">No uploaded tax codes yet.</p>
+              </div>
+            </article>
+            <article>
+              <h3>Ledger mappings</h3>
+              <p>Map each nominal code separately for removals, deposits, ad hoc invoices and credit notes.</p>
+              <div id="ledgerMappingBody" class="mapping-list">
+                <p class="empty-state">No uploaded nominal codes yet.</p>
+              </div>
+            </article>
+            <article>
+              <h3>Customer matching</h3>
+              <p>Search Sage contacts and manually confirm the right match. Fuzzy matches are never accepted automatically.</p>
+              <div id="customerMappingBody" class="mapping-list">
+                <p class="empty-state">No customers found in the reviewed rows yet.</p>
+              </div>
+            </article>
           </div>
         </section>
       </main>
@@ -1424,7 +1749,72 @@ table {
 }
 
 .review-table {
-  min-width: 1320px;
+  min-width: 1430px;
+}
+
+.mapping-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.mapping-grid article {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.mapping-grid h3 {
+  margin: 0 0 8px;
+}
+
+.mapping-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.mapping-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(240px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.mapping-row strong,
+.mapping-row small {
+  display: block;
+}
+
+.mapping-row small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.mapping-row select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.mapping-row button {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.contact-actions {
+  display: grid;
+  gap: 8px;
 }
 
 th,
@@ -1550,6 +1940,10 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 
+  .mapping-row {
+    grid-template-columns: 1fr;
+  }
+
   .status-stack {
     min-width: 0;
   }
@@ -1587,11 +1981,17 @@ const reviewSaveNotice = document.querySelector("#reviewSaveNotice");
 const sageStatusText = document.querySelector("#sageStatusText");
 const sageConnectLink = document.querySelector("#sageConnectLink");
 const sageDisconnectButton = document.querySelector("#sageDisconnectButton");
+const refreshSageReferencesButton = document.querySelector("#refreshSageReferencesButton");
+const mappingNotice = document.querySelector("#mappingNotice");
+const taxMappingBody = document.querySelector("#taxMappingBody");
+const ledgerMappingBody = document.querySelector("#ledgerMappingBody");
+const customerMappingBody = document.querySelector("#customerMappingBody");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
 let reviewRows = [];
 let activeReviewFilter = "all";
 let latestOriginalFileNames = [];
+let sageReferences = emptySageReferences();
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -1649,6 +2049,7 @@ for (const slot of uploadSlots) {
 }
 
 loadSageStatus();
+loadSageReferences();
 
 reviewFilters.addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("[data-filter]") : null;
@@ -1676,6 +2077,7 @@ reviewBody.addEventListener("change", (event) => {
 
   row.review_decision = select.value;
   renderReviewTotals();
+  refreshSageReadiness();
 });
 
 exportReviewButton.addEventListener("click", () => {
@@ -1737,6 +2139,61 @@ sageDisconnectButton.addEventListener("click", async () => {
   } catch (error) {
     sageStatusText.textContent = "Sage could not be disconnected.";
     console.error(error);
+  }
+});
+
+refreshSageReferencesButton.addEventListener("click", async () => {
+  refreshSageReferencesButton.disabled = true;
+  refreshSageReferencesButton.textContent = "Refreshing...";
+
+  try {
+    const response = await fetch("/api/sage/references/refresh", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      renderMappingNotice("error", result.error || "Sage references could not be refreshed.");
+      return;
+    }
+
+    renderMappingNotice("success", "Refreshed " + result.tax_rates + " tax rate" + plural(result.tax_rates) + " and " + result.ledger_accounts + " ledger account" + plural(result.ledger_accounts) + ".");
+    await loadSageReferences();
+    await refreshSageReadiness();
+  } catch (error) {
+    renderMappingNotice("error", "Sage references could not be refreshed.");
+    console.error(error);
+  } finally {
+    refreshSageReferencesButton.disabled = false;
+    refreshSageReferencesButton.textContent = "Refresh Sage references";
+  }
+});
+
+taxMappingBody.addEventListener("click", async (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-save-tax]") : null;
+  if (!button) {
+    return;
+  }
+
+  await saveReferenceMapping("tax_rate", button.dataset.saveTax || "", "", taxMappingBody);
+});
+
+ledgerMappingBody.addEventListener("click", async (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-save-ledger]") : null;
+  if (!button) {
+    return;
+  }
+
+  await saveReferenceMapping("ledger_account", button.dataset.saveLedger || "", button.dataset.context || "", ledgerMappingBody);
+});
+
+customerMappingBody.addEventListener("click", async (event) => {
+  const searchButton = event.target instanceof Element ? event.target.closest("[data-search-contact]") : null;
+  const saveButton = event.target instanceof Element ? event.target.closest("[data-save-contact]") : null;
+
+  if (searchButton) {
+    await searchContact(searchButton.dataset.searchContact || "");
+  }
+
+  if (saveButton) {
+    await saveCustomerMapping(saveButton.dataset.saveContact || "");
   }
 });
 
@@ -2013,6 +2470,8 @@ function initialiseReviewRows(rows) {
     ? "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export."
     : reviewRows.length + " transaction" + plural(reviewRows.length) + " ready for review. Import candidates are included by default; storage and review rows are not.";
   renderReviewTable();
+  renderMappingScreens();
+  refreshSageReadiness();
 }
 
 function resetReviewScreen() {
@@ -2028,20 +2487,21 @@ function resetReviewScreen() {
   reviewSaveNotice.textContent = "";
   reviewIntro.textContent = "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.";
   renderReviewTotals();
-  reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>';
+  renderMappingScreens();
+  reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions ready for review yet.</td></tr>';
 }
 
 function renderReviewTable() {
   renderReviewTotals();
 
   if (reviewRows.length === 0) {
-    reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions ready for review yet.</td></tr>';
+    reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions ready for review yet.</td></tr>';
     return;
   }
 
   const rows = reviewRows.filter(matchesActiveReviewFilter);
   if (rows.length === 0) {
-    reviewBody.innerHTML = '<tr><td colspan="12" class="empty-state">No transactions match this filter.</td></tr>';
+    reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions match this filter.</td></tr>';
     return;
   }
 
@@ -2060,6 +2520,7 @@ function renderReviewTable() {
       tableCell(formatMoney(grossAmount(row))) +
       '<td><span class="badge ' + badgeClassForClassification(row.classification) + '">' + escapeHtml(formatStatus(row.classification || "needs_review")) + "</span></td>" +
       '<td><span class="badge' + (row.warnings.length > 0 ? " warning" : "") + '">' + escapeHtml(warnings) + "</span></td>" +
+      '<td><span class="badge ' + badgeClassForReadiness(row.sage_readiness) + '">' + escapeHtml(formatStatus(row.sage_readiness || "not_checked")) + "</span></td>" +
       '<td>' + reviewActionSelect(row) + '</td>' +
       "</tr>";
   }).join("");
@@ -2080,6 +2541,227 @@ function renderReviewTotals() {
     ["Review needed", reviewNeeded],
     ["Excluded rows", excluded],
   ].map(([label, value]) => "<article><strong>" + escapeHtml(String(value)) + "</strong><span>" + escapeHtml(label) + "</span></article>").join("");
+}
+
+function renderMappingScreens() {
+  renderTaxMappings();
+  renderLedgerMappings();
+  renderCustomerMappings();
+}
+
+function renderTaxMappings() {
+  const codes = distinctBy(reviewRows.map((row) => row.tax_code).filter(Boolean));
+  const options = sageReferences.active_tax_rates || [];
+
+  if (codes.length === 0) {
+    taxMappingBody.innerHTML = '<p class="empty-state">No uploaded tax codes yet.</p>';
+    return;
+  }
+
+  taxMappingBody.innerHTML = codes.map((code) => {
+    const saved = sageReferences.tax_mappings.find((mapping) => mapping.source_code === code);
+    return '<div class="mapping-row">' +
+      '<div><strong>' + escapeHtml(code) + '</strong><small>Removals Manager tax code</small>' + savedBadge(saved) + '</div>' +
+      sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id) +
+      '<button type="button" data-save-tax="' + escapeHtml(code) + '">Save mapping</button>' +
+      '</div>';
+  }).join("");
+}
+
+function renderLedgerMappings() {
+  const entries = distinctLedgerEntries();
+  const options = sageReferences.active_ledger_accounts || [];
+
+  if (entries.length === 0) {
+    ledgerMappingBody.innerHTML = '<p class="empty-state">No uploaded nominal codes yet.</p>';
+    return;
+  }
+
+  ledgerMappingBody.innerHTML = entries.map((entry) => {
+    const saved = sageReferences.ledger_mappings.find((mapping) => mapping.source_code === entry.source_code && mapping.source_context === entry.source_context);
+    return '<div class="mapping-row">' +
+      '<div><strong>' + escapeHtml(entry.source_code) + '</strong><small>' + escapeHtml(formatTransactionType(entry.source_context)) + '</small>' + savedBadge(saved) + '</div>' +
+      sageReferenceSelect("ledger-" + slug(entry.source_context + "-" + entry.source_code), options, saved?.sage_entity_id) +
+      '<button type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Save mapping</button>' +
+      '</div>';
+  }).join("");
+}
+
+function renderCustomerMappings() {
+  const customers = uniqueCustomers();
+
+  if (customers.length === 0) {
+    customerMappingBody.innerHTML = '<p class="empty-state">No customers found in the reviewed rows yet.</p>';
+    return;
+  }
+
+  customerMappingBody.innerHTML = customers.map((customer) => {
+    const saved = sageReferences.customer_mappings.find((mapping) => mapping.normalized_customer_name === customer.normalized);
+    const contactOptions = (customer.matches || []).map((match) =>
+      '<option value="' + escapeHtml(match.sage_contact_id) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
+    ).join("");
+    const select = customer.matches
+      ? '<select id="contact-' + slug(customer.normalized) + '">' + contactOptions + '</select>'
+      : '<select id="contact-' + slug(customer.normalized) + '" disabled><option>Search Sage first</option></select>';
+    const matchText = customer.match_status === "ambiguous"
+      ? '<small>Multiple possible matches. Please choose manually.</small>'
+      : customer.missing_contact_message
+        ? '<small>' + escapeHtml(customer.missing_contact_message) + '</small>'
+        : "";
+
+    return '<div class="mapping-row">' +
+      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small>' + savedBadge(saved) + matchText + '</div>' +
+      select +
+      '<div class="contact-actions">' +
+        '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Refresh and search</button>' +
+        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (customer.matches ? "" : " disabled") + '>Save contact</button>' +
+      '</div>' +
+      '</div>';
+  }).join("");
+}
+
+async function loadSageReferences() {
+  try {
+    const response = await fetch("/api/sage/references");
+    const data = await response.json();
+    if (!response.ok) {
+      sageReferences = emptySageReferences();
+      renderMappingNotice("error", data.error || "Sage mapping data could not be loaded.");
+      renderMappingScreens();
+      return;
+    }
+
+    sageReferences = {
+      tax_rates: data.tax_rates || [],
+      ledger_accounts: data.ledger_accounts || [],
+      active_tax_rates: data.active_tax_rates || [],
+      active_ledger_accounts: data.active_ledger_accounts || [],
+      tax_mappings: data.tax_mappings || [],
+      ledger_mappings: data.ledger_mappings || [],
+      customer_mappings: data.customer_mappings || [],
+    };
+    renderMappingScreens();
+    await refreshSageReadiness();
+  } catch (error) {
+    sageReferences = emptySageReferences();
+    renderMappingScreens();
+    console.error(error);
+  }
+}
+
+async function saveReferenceMapping(mappingType, sourceCode, sourceContext, container) {
+  const selectId = mappingType === "tax_rate"
+    ? "tax-" + slug(sourceCode)
+    : "ledger-" + slug(sourceContext + "-" + sourceCode);
+  const select = container.querySelector("#" + cssEscape(selectId));
+  const option = select?.selectedOptions?.[0];
+  if (!select?.value || !option) {
+    renderMappingNotice("error", "Choose a Sage reference before saving the mapping.");
+    return;
+  }
+
+  const response = await fetch("/api/sage/reference-mappings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mapping_type: mappingType,
+      source_code: sourceCode,
+      source_context: sourceContext,
+      sage_entity_id: select.value,
+      sage_display_name: option.textContent,
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    renderMappingNotice("error", result.error || "Mapping could not be saved.");
+    return;
+  }
+
+  renderMappingNotice("success", "Mapping saved.");
+  await loadSageReferences();
+}
+
+async function searchContact(normalizedCustomerName) {
+  const customer = uniqueCustomers().find((item) => item.normalized === normalizedCustomerName);
+  if (!customer) {
+    return;
+  }
+
+  const response = await fetch("/api/sage/contacts/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      customer_name: customer.name,
+      normalized_customer_name: customer.normalized,
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    renderMappingNotice("error", result.error || "Sage contacts could not be searched.");
+    return;
+  }
+
+  customer.contact_search = result;
+  for (const row of reviewRows) {
+    if (normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
+      row.contact_search = result;
+    }
+  }
+  renderMappingNotice(result.match_status === "none" ? "error" : "success", result.missing_contact_message || "Contact search complete. Confirm the correct match manually.");
+  renderCustomerMappings();
+}
+
+async function saveCustomerMapping(normalizedCustomerName) {
+  const select = customerMappingBody.querySelector("#contact-" + cssEscape(slug(normalizedCustomerName)));
+  const option = select?.selectedOptions?.[0];
+  if (!select?.value || !option) {
+    renderMappingNotice("error", "Choose a Sage contact before saving the customer mapping.");
+    return;
+  }
+
+  const response = await fetch("/api/sage/customer-mappings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      normalized_customer_name: normalizedCustomerName,
+      sage_contact_id: select.value,
+      sage_contact_display_name: option.textContent,
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    renderMappingNotice("error", result.error || "Customer mapping could not be saved.");
+    return;
+  }
+
+  renderMappingNotice("success", "Customer mapping saved.");
+  await loadSageReferences();
+}
+
+async function refreshSageReadiness() {
+  if (reviewRows.length === 0) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/sage/readiness", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows: reviewRows }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      return;
+    }
+
+    const readinessById = new Map(result.readiness.map((item) => [item.review_id, item.status]));
+    for (const row of reviewRows) {
+      row.sage_readiness = readinessById.get(row.review_id) || "blocked_by_warning";
+    }
+    renderReviewTable();
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 function matchesActiveReviewFilter(row) {
@@ -2104,6 +2786,58 @@ function matchesActiveReviewFilter(row) {
   }
 
   return true;
+}
+
+function uniqueCustomers() {
+  const map = new Map();
+  for (const row of reviewRows) {
+    if (!row.customer_name) {
+      continue;
+    }
+    const normalized = normalizeCustomerNameClient(row.customer_name);
+    if (!map.has(normalized)) {
+      const search = row.contact_search;
+      map.set(normalized, {
+        name: row.customer_name,
+        normalized,
+        matches: search?.matches,
+        match_status: search?.match_status,
+        missing_contact_message: search?.missing_contact_message,
+      });
+    }
+  }
+  return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function distinctLedgerEntries() {
+  const map = new Map();
+  for (const row of reviewRows) {
+    if (!row.nominal_code) {
+      continue;
+    }
+    map.set(row.nominal_code + "|" + row.transaction_type, {
+      source_code: row.nominal_code,
+      source_context: row.transaction_type,
+    });
+  }
+  return [...map.values()].sort((left, right) => (left.source_context + left.source_code).localeCompare(right.source_context + right.source_code));
+}
+
+function distinctBy(values) {
+  return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))].sort();
+}
+
+function sageReferenceSelect(id, entries, selectedId) {
+  const options = ['<option value="">Choose Sage record</option>'].concat(entries.map((entry) => {
+    const selected = entry.sage_entity_id === selectedId ? " selected" : "";
+    const code = entry.source_code ? entry.source_code + " - " : "";
+    return '<option value="' + escapeHtml(entry.sage_entity_id) + '"' + selected + '>' + escapeHtml(code + entry.sage_display_name) + '</option>';
+  }));
+  return '<select id="' + escapeHtml(id) + '">' + options.join("") + '</select>';
+}
+
+function savedBadge(saved) {
+  return saved ? '<small>Saved: ' + escapeHtml(saved.sage_display_name) + '</small>' : '<small>Not mapped yet</small>';
 }
 
 function reviewActionSelect(row) {
@@ -2152,6 +2886,18 @@ function reviewRiskClass(row) {
   }
 
   return risky ? "risky-row" : "";
+}
+
+function badgeClassForReadiness(value) {
+  if (value === "ready_for_sage") {
+    return "";
+  }
+
+  if (value === "blocked_by_warning" || value === "already_imported") {
+    return "error";
+  }
+
+  return "warning";
 }
 
 function downloadReviewCsv() {
@@ -2246,6 +2992,18 @@ function inferReportingMonth(rows) {
   return firstDate ? String(firstDate).slice(0, 7) : null;
 }
 
+function emptySageReferences() {
+  return {
+    tax_rates: [],
+    ledger_accounts: [],
+    active_tax_rates: [],
+    active_ledger_accounts: [],
+    tax_mappings: [],
+    ledger_mappings: [],
+    customer_mappings: [],
+  };
+}
+
 function renderClassificationSummary(summary) {
   const values = summary || {
     total_rows_uploaded: 0,
@@ -2331,6 +3089,21 @@ function formatTransactionType(value) {
 
 function formatStatus(value) {
   return String(value).replaceAll("_", " ");
+}
+
+function normalizeCustomerNameClient(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ").replace(/[.,'"]/g, "");
+}
+
+function slug(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") {
+    return window.CSS.escape(value);
+  }
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
 }
 
 function badgeClassForClassification(value) {

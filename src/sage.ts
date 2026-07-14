@@ -10,6 +10,12 @@ export const sageOAuthEndpoints = {
   filter: "apiv3.1",
 };
 
+export const sageReadOnlyPaths = {
+  ledgerAccounts: "/ledger_accounts",
+  taxRates: "/tax_rates",
+  contacts: "/contacts",
+};
+
 export interface SageConnectionConfig {
   clientId: string;
   clientSecret: string;
@@ -413,6 +419,32 @@ export class SageApiClient {
 
     return updated;
   }
+}
+
+export async function fetchSageLedgerAccounts(client: SageApiClient): Promise<unknown> {
+  const response = await client.request(sageReadOnlyPaths.ledgerAccounts);
+  if (!response.ok) {
+    throw new SageBusinessLookupError("Sage ledger accounts could not be read.");
+  }
+  return response.json();
+}
+
+export async function fetchSageTaxRates(client: SageApiClient): Promise<unknown> {
+  const response = await client.request(sageReadOnlyPaths.taxRates);
+  if (!response.ok) {
+    throw new SageBusinessLookupError("Sage tax rates could not be read.");
+  }
+  return response.json();
+}
+
+export async function searchSageContacts(client: SageApiClient, search: string): Promise<unknown> {
+  const params = new URLSearchParams();
+  params.set("search", search);
+  const response = await client.request(`${sageReadOnlyPaths.contacts}?${params.toString()}`);
+  if (!response.ok) {
+    throw new SageBusinessLookupError("Sage contacts could not be searched.");
+  }
+  return response.json();
 }
 
 export function expiryFromNow(expiresInSeconds: number): string {
