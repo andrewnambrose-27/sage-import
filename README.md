@@ -118,13 +118,13 @@ The root `index.html` file is a simple live-check page for confirming that `sage
 
 D1 is used for reviewed normalized records only. Uploaded CSV/PDF files should still not be stored permanently.
 
-Create the database:
+The production database is configured in `wrangler.jsonc` as the Pages D1 binding `DB`, using `sage-import-db` and the repository's `migrations/` folder. Do not create another database or add a second dashboard binding with the same name.
+
+List outstanding production migrations:
 
 ```bash
-npx wrangler d1 create sage-import-db
+npx wrangler d1 migrations list sage-import-db --remote
 ```
-
-Add the returned database as a Pages D1 binding named `DB`. You can do this in Cloudflare Pages under **Settings > Bindings > D1 database bindings**, or by adding the returned `d1_databases` block to `wrangler.jsonc` once the real `database_id` is known.
 
 Apply migrations locally:
 
@@ -136,6 +136,13 @@ Apply migrations remotely:
 
 ```bash
 npx wrangler d1 migrations apply sage-import-db --remote
+```
+
+Confirm the applied production schema:
+
+```bash
+npx wrangler d1 migrations list sage-import-db --remote
+npx wrangler d1 execute sage-import-db --remote --command "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name;"
 ```
 
 For local Pages development, the `DB` binding must be available before the "Save reviewed batch" action will persist data. Without the binding, upload, parsing, reconciliation and review still work in memory.
