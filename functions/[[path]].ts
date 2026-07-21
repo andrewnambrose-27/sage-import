@@ -1,5 +1,5 @@
 import { classifyTransactions } from "../src/classification";
-import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName } from "../src/db";
+import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
@@ -15,6 +15,10 @@ import {
   fetchConnectedBusiness,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
+  createSageDraftInvoice,
+  searchSageSalesInvoices,
+  SageDraftInvoiceRequestError,
+  SageUncertainResultError,
   searchSageContacts,
   safeStatusFromConnection,
   validateOAuthCallbackInput,
@@ -29,7 +33,9 @@ import {
   parseSageReferenceItems,
   readinessForInvoice,
   type SageReferenceType,
+  type ReadinessInput,
 } from "../src/sageMappings";
+import { assertDraftCreationSafety, buildSageDraftInvoice, DraftInvoiceValidationError, type DraftInvoicePreview } from "../src/sageDraftInvoice";
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
@@ -135,6 +141,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/sage/readiness" && request.method === "POST") {
         return handleSageReadiness(request, env);
+      }
+
+      if (url.pathname === "/api/sage/drafts/dry-run" && request.method === "POST") {
+        return handleSageDraftDryRun(request, env);
+      }
+
+      if (url.pathname === "/api/sage/drafts/create" && request.method === "POST") {
+        return handleSageDraftCreate(request, env);
       }
 
       if ((url.pathname === "/" || url.pathname === "/dashboard" || url.pathname === "/upload") && request.method === "GET") {
@@ -254,6 +268,7 @@ async function handleImportBatchSave(request: Request, env: Env): Promise<Respon
       ok: true,
       import_batch_id: result.batch.id,
       invoice_count: result.batch.invoice_count,
+      source_invoice_ids: result.invoices.map((invoice) => invoice.id),
       duplicate_blocked: false,
     });
   } catch (error) {
@@ -573,6 +588,309 @@ async function handleSageReadiness(request: Request, env: Env): Promise<Response
     distinct_tax_codes: distinctTaxCodes(rows as never),
     distinct_ledger_codes: distinctLedgerCodes(rows as never),
   });
+}
+
+async function handleSageDraftDryRun(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const body = await request.json() as { source_invoice_id?: string; due_date?: string };
+  const prepared = await prepareSageDraftInvoice(database.value, body.source_invoice_id ?? "", body.due_date ?? "");
+  if (!prepared.ok) {
+    return jsonResponse({ ok: false, error: prepared.error }, prepared.status);
+  }
+
+  return jsonResponse({
+    ok: true,
+    mode: "dry_run",
+    ready: true,
+    source_invoice_id: prepared.sourceInvoiceId,
+    preview: prepared.preview,
+  });
+}
+
+async function handleSageDraftCreate(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+
+  const body = await request.json() as { source_invoice_id?: string; due_date?: string; confirmed?: boolean };
+  if (body.confirmed !== true) {
+    return jsonResponse({ ok: false, error: "Confirm this one draft invoice before creating it in Sage." }, 400);
+  }
+
+  const prepared = await prepareSageDraftInvoice(database.value, body.source_invoice_id ?? "", body.due_date ?? "");
+  if (!prepared.ok) {
+    return jsonResponse({ ok: false, error: prepared.error }, prepared.status);
+  }
+
+  const client = sageClientFromEnv(env);
+  if (!client.ok) {
+    return jsonResponse(client.body, client.status);
+  }
+
+  let reservedForCreate = false;
+  try {
+    const existingInSage = await searchSageSalesInvoices(client.value, prepared.preview.invoice_reference);
+    const existingId = sageInvoiceIdForReference(existingInSage, prepared.preview.invoice_reference);
+    if (existingId) {
+      const reservation = await database.value.reserveSageImport(prepared.sourceInvoiceId, prepared.contactId);
+      if (!reservation.reserved) {
+        return sageImportAlreadyReserved(reservation.record.import_status, reservation.record.sage_invoice_id);
+      }
+      await database.value.markSageImportCreated(prepared.sourceInvoiceId, existingId);
+      return jsonResponse({
+        ok: true,
+        created: false,
+        found_existing: true,
+        sage_invoice_id: existingId,
+        message: "An existing Sage invoice with this Removals Manager reference was found. No new draft was created.",
+      });
+    }
+
+    const reservation = await database.value.reserveSageImport(prepared.sourceInvoiceId, prepared.contactId);
+    if (!reservation.reserved) {
+      return sageImportAlreadyReserved(reservation.record.import_status, reservation.record.sage_invoice_id);
+    }
+    reservedForCreate = true;
+
+    const sageResult = await createSageDraftInvoice(client.value, prepared.preview.payload);
+    const sageInvoiceId = sageInvoiceIdFromResult(sageResult);
+    if (!sageInvoiceId) {
+      await database.value.markSageImportUncertain(prepared.sourceInvoiceId, "Sage accepted the request but did not return a draft invoice ID. Check Sage before trying again.");
+      return jsonResponse({ ok: false, uncertain: true, error: "Sage did not return a draft ID. Check Sage before trying again." }, 502);
+    }
+
+    await database.value.markSageImportCreated(prepared.sourceInvoiceId, sageInvoiceId);
+    return jsonResponse({
+      ok: true,
+      created: true,
+      sage_invoice_id: sageInvoiceId,
+      message: "One Sage draft invoice was created. It has not been sent, released or published.",
+    });
+  } catch (error) {
+    if (error instanceof SageDraftInvoiceRequestError) {
+      await database.value.markSageImportFailed(prepared.sourceInvoiceId, "Sage rejected the draft invoice. Review the preview and Sage mappings before trying again.", `sage_${error.status}`);
+      return jsonResponse({ ok: false, error: "Sage rejected the draft invoice. No draft was confirmed as created." }, 502);
+    }
+    if (error instanceof SageAuthorizationError) {
+      await database.value.markSageImportFailed(prepared.sourceInvoiceId, "Reconnect Sage before creating a draft invoice.", "authorization_error");
+      return jsonResponse({ ok: false, error: "Reconnect Sage before creating a draft invoice." }, 401);
+    }
+
+    if (!reservedForCreate) {
+      console.error("Sage duplicate check failed", safeError(error));
+      return jsonResponse({ ok: false, error: "Sage could not be checked for an existing invoice. No draft was created." }, 502);
+    }
+
+    await database.value.markSageImportUncertain(
+      prepared.sourceInvoiceId,
+      "The Sage request did not return a reliable result. Check Sage for the Removals Manager reference before trying again.",
+    );
+    console.error("Sage draft invoice result uncertain", safeError(error));
+    return jsonResponse({ ok: false, uncertain: true, error: "The Sage result is uncertain. Check Sage before trying again." }, 502);
+  }
+}
+
+async function prepareSageDraftInvoice(
+  database: ReturnType<typeof createImportDatabase>,
+  sourceInvoiceId: string,
+  dueDate: string,
+): Promise<
+  | { ok: true; sourceInvoiceId: string; contactId: string; preview: DraftInvoicePreview }
+  | { ok: false; status: number; error: string }
+> {
+  if (!sourceInvoiceId) {
+    return { ok: false, status: 400, error: "Save the reviewed batch, then select one invoice to preview." };
+  }
+
+  const lines = await database.listInvoiceLinesForSourceInvoice(sourceInvoiceId);
+  if (lines.length === 0) {
+    return { ok: false, status: 404, error: "The saved source invoice could not be found." };
+  }
+
+  const anchor = lines.find((line) => line.id === sourceInvoiceId) ?? lines[0];
+  if (!anchor.rm_invoice_number || !anchor.invoice_date) {
+    return { ok: false, status: 400, error: "This invoice is missing its Removals Manager number or date." };
+  }
+
+  const [customerMappings, taxMappings, ledgerMappings, importedIds] = await Promise.all([
+    database.listCustomerMappings(),
+    database.listReferenceMappings("tax_rate"),
+    database.listReferenceMappings("ledger_account"),
+    database.importedSourceInvoiceIds([anchor.id]),
+  ]);
+  const readinessContext = { customerMappings, taxMappings, ledgerMappings, importedSourceInvoiceIds: importedIds };
+
+  if (importedIds.has(anchor.id)) {
+    return { ok: false, status: 409, error: "This source invoice already has a Sage import record. Check Sage before another attempt." };
+  }
+
+  for (const line of lines) {
+    const readiness = readinessForInvoice(sourceInvoiceForReadiness(line), readinessContext);
+    if (readiness !== "ready_for_sage") {
+      return { ok: false, status: 400, error: `Invoice ${anchor.rm_invoice_number} is not Sage-ready: ${readiness.replaceAll("_", " ")}.` };
+    }
+  }
+
+  const customerNames = new Set(lines.map((line) => line.normalized_customer_name).filter(Boolean));
+  if (customerNames.size !== 1) {
+    return { ok: false, status: 400, error: "This invoice has inconsistent customer details and needs review." };
+  }
+  const customerMapping = customerMappings.find((mapping) =>
+    mapping.manually_confirmed && mapping.normalized_customer_name === anchor.normalized_customer_name,
+  );
+  if (!customerMapping) {
+    return { ok: false, status: 400, error: "A confirmed Sage customer mapping is required." };
+  }
+
+  try {
+    const reconciliation = reconciliationForInvoice(lines);
+    const preview = buildSageDraftInvoice({
+      contactId: customerMapping.sage_contact_id,
+      contactName: customerMapping.sage_contact_display_name,
+      invoiceNumber: anchor.rm_invoice_number,
+      invoiceDate: anchor.invoice_date,
+      dueDate,
+      reconciliation,
+      lines: lines.map((line) => {
+        const tax = taxMappings.find((mapping) => mapping.manually_confirmed && mapping.source_code === line.rm_tax_code);
+        const ledger = ledgerMappings.find((mapping) =>
+          mapping.manually_confirmed && mapping.source_code === line.rm_nominal_code && mapping.source_context === line.source_type,
+        );
+        if (!tax || !ledger) {
+          throw new DraftInvoiceValidationError("A confirmed Sage tax and ledger mapping is required for every line.");
+        }
+        return {
+          source: line,
+          mapping: {
+            ledgerAccountId: ledger.sage_entity_id,
+            ledgerAccountName: ledger.sage_display_name,
+            taxRateId: tax.sage_entity_id,
+            taxRateName: tax.sage_display_name,
+          },
+        };
+      }),
+    });
+    assertDraftCreationSafety({
+      isStorage: lines.some((line) => line.classification === "exclude_storage"),
+      alreadyImported: false,
+      hasConfirmedContact: true,
+      totalsMatch: draftTotalsMatchReconciliation(preview, reconciliation),
+    });
+    return { ok: true, sourceInvoiceId: anchor.id, contactId: customerMapping.sage_contact_id, preview };
+  } catch (error) {
+    if (error instanceof DraftInvoiceValidationError) {
+      return { ok: false, status: 400, error: error.message };
+    }
+    throw error;
+  }
+}
+
+function sourceInvoiceForReadiness(line: SourceInvoiceRecord): ReadinessInput {
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = JSON.parse(line.raw_source_json) as Record<string, unknown>;
+  } catch {
+    raw = {};
+  }
+  const warnings = parseStringArray(line.warnings_json);
+  return {
+    transaction_type: line.source_type,
+    customer_name: line.customer_name ?? undefined,
+    tax_code: line.rm_tax_code,
+    nominal_code: line.rm_nominal_code,
+    classification: line.classification,
+    review_decision: line.review_decision,
+    warnings,
+    pdf_match_status: typeof raw.pdf_match_status === "string" ? raw.pdf_match_status : undefined,
+    source_invoice_id: line.id,
+  };
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return ["Saved warning data could not be read."];
+  }
+}
+
+function reconciliationForInvoice(lines: SourceInvoiceRecord[]): {
+  csv_gross_minor: number | null;
+  pdf_gross_minor: number | null;
+  csv_vat_minor: number | null;
+  pdf_vat_minor: number | null;
+} | null {
+  const raw = lines.map((line) => {
+    try {
+      return JSON.parse(line.raw_source_json) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }).find((item) => typeof item.reconciled_csv_amount === "number" || typeof item.reconciled_pdf_amount === "number");
+  if (!raw) {
+    return null;
+  }
+  return {
+    csv_gross_minor: moneyMinorFromRaw(raw.reconciled_csv_amount),
+    pdf_gross_minor: moneyMinorFromRaw(raw.reconciled_pdf_amount),
+    csv_vat_minor: moneyMinorFromRaw(raw.reconciled_csv_vat),
+    pdf_vat_minor: moneyMinorFromRaw(raw.reconciled_pdf_vat),
+  };
+}
+
+function moneyMinorFromRaw(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const minor = Math.round(value * 100);
+  return Math.abs(value * 100 - minor) < 0.000001 ? minor : null;
+}
+
+function draftTotalsMatchReconciliation(
+  preview: DraftInvoicePreview,
+  reconciliation: DraftInvoicePreview["reconciliation"],
+): boolean {
+  if (!reconciliation) {
+    return true;
+  }
+  const values = [
+    [preview.totals.gross_minor, reconciliation.csv_gross_minor],
+    [preview.totals.gross_minor, reconciliation.pdf_gross_minor],
+    [preview.totals.vat_minor, reconciliation.csv_vat_minor],
+    [preview.totals.vat_minor, reconciliation.pdf_vat_minor],
+  ] as const;
+  return values.every(([actual, expected]) => expected === null || actual === expected);
+}
+
+function sageInvoiceIdForReference(data: unknown, reference: string): string | null {
+  const items = sageApiItems(data);
+  const matching = items.find((item) => item.reference === reference);
+  return matching && typeof matching.id === "string" ? matching.id : null;
+}
+
+function sageInvoiceIdFromResult(data: unknown): string | null {
+  return data && typeof data === "object" && !Array.isArray(data) && typeof (data as Record<string, unknown>).id === "string"
+    ? (data as Record<string, string>).id
+    : null;
+}
+
+function sageApiItems(data: unknown): Array<Record<string, unknown>> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return [];
+  }
+  const items = (data as Record<string, unknown>).$items ?? (data as Record<string, unknown>).items;
+  return Array.isArray(items) ? items.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item)) : [];
+}
+
+function sageImportAlreadyReserved(status: string, sageInvoiceId: string | null): Response {
+  const detail = sageInvoiceId ? ` Existing Sage draft ID: ${sageInvoiceId}.` : "";
+  return jsonResponse({ ok: false, error: `This invoice is already reserved with status ${status}. Check Sage before another attempt.${detail}` }, 409);
 }
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
@@ -1252,6 +1570,28 @@ function uploadPage(): string {
             </article>
           </div>
         </section>
+
+        <section class="results-panel draft-panel" aria-live="polite">
+          <div class="section-heading">
+            <div>
+              <h2>Prepare one Sage draft invoice</h2>
+              <p>Choose a saved, Sage-ready invoice from the review table. This stage creates a draft only; it never sends, releases or publishes an invoice.</p>
+            </div>
+          </div>
+          <div id="draftInvoiceNotice" class="notice"></div>
+          <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then select “Preview draft” beside one Sage-ready invoice.</div>
+          <div id="draftInvoiceWorkspace" class="draft-workspace" hidden>
+            <div class="draft-controls">
+              <label>Due date
+                <input id="draftDueDate" type="date">
+              </label>
+              <button id="draftDryRunButton" type="button">Check draft details</button>
+              <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> I confirm this one draft should be created in Sage.</label>
+              <button id="draftCreateButton" type="button" disabled>Create one draft invoice in Sage</button>
+            </div>
+            <div id="draftInvoicePreview" class="draft-preview"></div>
+          </div>
+        </section>
       </main>
       <script src="/assets/app.js" defer></script>
     `,
@@ -1812,6 +2152,94 @@ table {
   padding: 0 12px;
 }
 
+.draft-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.draft-empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.draft-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.draft-controls > label:not(.confirm-control) {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.draft-controls input[type="date"] {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.confirm-control {
+  display: inline-flex;
+  max-width: 300px;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.draft-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.draft-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.draft-preview-grid article {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.draft-preview-grid span,
+.draft-preview-grid strong {
+  display: block;
+}
+
+.draft-preview-grid span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.draft-preview-grid strong {
+  margin-top: 5px;
+}
+
+.draft-line-table {
+  min-width: 760px;
+}
+
 .contact-actions {
   display: grid;
   gap: 8px;
@@ -1944,6 +2372,10 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 
+  .draft-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
   .status-stack {
     min-width: 0;
   }
@@ -1986,12 +2418,22 @@ const mappingNotice = document.querySelector("#mappingNotice");
 const taxMappingBody = document.querySelector("#taxMappingBody");
 const ledgerMappingBody = document.querySelector("#ledgerMappingBody");
 const customerMappingBody = document.querySelector("#customerMappingBody");
+const draftInvoiceNotice = document.querySelector("#draftInvoiceNotice");
+const draftInvoiceEmpty = document.querySelector("#draftInvoiceEmpty");
+const draftInvoiceWorkspace = document.querySelector("#draftInvoiceWorkspace");
+const draftDueDate = document.querySelector("#draftDueDate");
+const draftDryRunButton = document.querySelector("#draftDryRunButton");
+const draftConfirmCheckbox = document.querySelector("#draftConfirmCheckbox");
+const draftCreateButton = document.querySelector("#draftCreateButton");
+const draftInvoicePreview = document.querySelector("#draftInvoicePreview");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
 let reviewRows = [];
 let activeReviewFilter = "all";
 let latestOriginalFileNames = [];
 let sageReferences = emptySageReferences();
+let activeDraftSourceInvoiceId = null;
+let activeDraftPreview = null;
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -2080,6 +2522,14 @@ reviewBody.addEventListener("change", (event) => {
   refreshSageReadiness();
 });
 
+reviewBody.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-preview-draft]") : null;
+  if (!button) {
+    return;
+  }
+  previewDraftInvoice(button.dataset.previewDraft || "");
+});
+
 exportReviewButton.addEventListener("click", () => {
   if (reviewRows.length === 0) {
     return;
@@ -2114,12 +2564,76 @@ saveBatchButton.addEventListener("click", async () => {
     }
 
     renderReviewSaveNotice("success", "Saved reviewed batch " + result.import_batch_id + " with " + result.invoice_count + " transaction" + plural(result.invoice_count) + ".");
+    if (Array.isArray(result.source_invoice_ids) && result.source_invoice_ids.length === reviewRows.length) {
+      for (let index = 0; index < reviewRows.length; index += 1) {
+        reviewRows[index].source_invoice_id = result.source_invoice_ids[index];
+      }
+      saveBatchButton.disabled = true;
+      saveBatchButton.textContent = "Reviewed batch saved";
+      renderReviewTable();
+    }
   } catch (error) {
     renderReviewSaveNotice("error", "The reviewed batch could not be saved.");
     console.error(error);
   } finally {
-    saveBatchButton.disabled = reviewRows.length === 0;
-    saveBatchButton.textContent = "Save reviewed batch";
+    if (!reviewRows.every((row) => row.source_invoice_id)) {
+      saveBatchButton.disabled = reviewRows.length === 0;
+      saveBatchButton.textContent = "Save reviewed batch";
+    }
+  }
+});
+
+draftDryRunButton.addEventListener("click", () => {
+  if (activeDraftSourceInvoiceId) {
+    previewDraftInvoice(activeDraftSourceInvoiceId);
+  }
+});
+
+draftDueDate.addEventListener("change", () => {
+  activeDraftPreview = null;
+  draftCreateButton.disabled = true;
+  renderDraftNotice("error", "Due date changed. Check the draft details again before creating it.");
+});
+
+draftConfirmCheckbox.addEventListener("change", () => {
+  draftCreateButton.disabled = !activeDraftPreview || !draftConfirmCheckbox.checked;
+});
+
+draftCreateButton.addEventListener("click", async () => {
+  if (!activeDraftSourceInvoiceId || !activeDraftPreview || !draftConfirmCheckbox.checked) {
+    return;
+  }
+  if (!window.confirm("Create one draft invoice in Sage? It will not be sent, released or published.")) {
+    return;
+  }
+
+  draftCreateButton.disabled = true;
+  draftCreateButton.textContent = "Creating draft...";
+  try {
+    const response = await fetch("/api/sage/drafts/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_invoice_id: activeDraftSourceInvoiceId,
+        due_date: draftDueDate.value,
+        confirmed: true,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      renderDraftNotice("error", result.error || "The Sage draft invoice could not be created.");
+      return;
+    }
+    const prefix = result.found_existing ? "No new draft was created." : "One draft invoice was created.";
+    renderDraftNotice("success", prefix + " Sage draft ID: " + result.sage_invoice_id + ". It has not been sent, released or published.");
+    activeDraftPreview = null;
+    draftConfirmCheckbox.checked = false;
+    await refreshSageReadiness();
+  } catch (error) {
+    renderDraftNotice("error", "The Sage draft invoice result could not be confirmed. Check Sage before trying again.");
+    console.error(error);
+  } finally {
+    draftCreateButton.textContent = "Create one draft invoice in Sage";
   }
 });
 
@@ -2399,7 +2913,7 @@ function renderParsedRows(result, pdfSummaries) {
   ];
   renderClassificationSummary(result.classification_summary);
   renderReconciliation(result.reconciliation || []);
-  initialiseReviewRows(rows);
+  initialiseReviewRows(rows, result.reconciliation || []);
 
   if (rows.length === 0) {
     renderNotice("error", "No CSV rows were found to parse." + pdfText);
@@ -2442,11 +2956,17 @@ function renderParsedRows(result, pdfSummaries) {
   }
 }
 
-function initialiseReviewRows(rows) {
+function initialiseReviewRows(rows, reconciliation) {
+  const reconciliationByInvoice = new Map(reconciliation.map((entry) => [entry.invoice_number, entry]));
   reviewRows = rows.map((row, index) => {
     const classification = row.classification || "needs_review";
+    const matched = reconciliationByInvoice.get(row.invoice_number);
     return {
       ...row,
+      reconciled_csv_amount: matched ? matched.csv_amount : null,
+      reconciled_pdf_amount: matched ? matched.pdf_amount : null,
+      reconciled_csv_vat: matched ? matched.csv_vat : null,
+      reconciled_pdf_vat: matched ? matched.pdf_vat : null,
       review_id: [
         row.source_file || "file",
         row.row_number || index + 1,
@@ -2466,6 +2986,7 @@ function initialiseReviewRows(rows) {
   saveBatchButton.disabled = reviewRows.length === 0;
   reviewSaveNotice.className = "notice";
   reviewSaveNotice.textContent = "";
+  resetDraftInvoiceWorkspace();
   reviewIntro.textContent = reviewRows.length === 0
     ? "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export."
     : reviewRows.length + " transaction" + plural(reviewRows.length) + " ready for review. Import candidates are included by default; storage and review rows are not.";
@@ -2485,6 +3006,7 @@ function resetReviewScreen() {
   latestOriginalFileNames = [];
   reviewSaveNotice.className = "notice";
   reviewSaveNotice.textContent = "";
+  resetDraftInvoiceWorkspace();
   reviewIntro.textContent = "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.";
   renderReviewTotals();
   renderMappingScreens();
@@ -2521,7 +3043,7 @@ function renderReviewTable() {
       '<td><span class="badge ' + badgeClassForClassification(row.classification) + '">' + escapeHtml(formatStatus(row.classification || "needs_review")) + "</span></td>" +
       '<td><span class="badge' + (row.warnings.length > 0 ? " warning" : "") + '">' + escapeHtml(warnings) + "</span></td>" +
       '<td><span class="badge ' + badgeClassForReadiness(row.sage_readiness) + '">' + escapeHtml(formatStatus(row.sage_readiness || "not_checked")) + "</span></td>" +
-      '<td>' + reviewActionSelect(row) + '</td>' +
+      '<td>' + reviewActionSelect(row) + draftPreviewButton(row) + '</td>' +
       "</tr>";
   }).join("");
 }
@@ -2854,7 +3376,22 @@ function reviewActionSelect(row) {
     return '<option value="' + option.value + '"' + selected + disabled + ">" + option.label + "</option>";
   }).join("");
 
-  return '<select class="action-select" data-review-action="' + escapeHtml(row.review_id) + '"' + (storageLocked ? ' title="Storage rows are excluded by default."' : "") + ">" + optionHtml + "</select>";
+  const locked = storageLocked || !!row.source_invoice_id;
+  return '<select class="action-select" data-review-action="' + escapeHtml(row.review_id) + '"' + (locked ? " disabled" : "") + (storageLocked ? ' title="Storage rows are excluded by default."' : row.source_invoice_id ? ' title="Saved rows are locked for draft safety."' : "") + ">" + optionHtml + "</select>";
+}
+
+function draftPreviewButton(row) {
+  if (!row.source_invoice_id) {
+    return '<small class="cell-muted">Save batch first</small>';
+  }
+  if (row.sage_readiness !== "ready_for_sage") {
+    return '<small class="cell-muted">Not Sage-ready</small>';
+  }
+  const firstRowForInvoice = reviewRows.find((item) => item.invoice_number === row.invoice_number);
+  if (!firstRowForInvoice || firstRowForInvoice.review_id !== row.review_id) {
+    return '<small class="cell-muted">Included in this invoice</small>';
+  }
+  return '<button type="button" class="draft-preview-button" data-preview-draft="' + escapeHtml(row.source_invoice_id) + '">Preview draft</button>';
 }
 
 function defaultReviewDecision(classification) {
@@ -2948,6 +3485,123 @@ function downloadReviewCsv() {
 function renderReviewSaveNotice(state, message) {
   reviewSaveNotice.className = "notice show " + state;
   reviewSaveNotice.textContent = message;
+}
+
+async function previewDraftInvoice(sourceInvoiceId) {
+  const row = reviewRows.find((item) => item.source_invoice_id === sourceInvoiceId);
+  if (!row) {
+    renderDraftNotice("error", "Save the reviewed batch before preparing a draft.");
+    return;
+  }
+
+  const changedInvoice = activeDraftSourceInvoiceId !== sourceInvoiceId;
+  activeDraftSourceInvoiceId = sourceInvoiceId;
+  activeDraftPreview = null;
+  draftConfirmCheckbox.checked = false;
+  draftCreateButton.disabled = true;
+  if (changedInvoice || !draftDueDate.value) {
+    draftDueDate.value = datePlusDays(row.date, 30);
+  }
+  draftInvoiceEmpty.hidden = true;
+  draftInvoiceWorkspace.hidden = false;
+  draftDryRunButton.disabled = true;
+  draftDryRunButton.textContent = "Checking...";
+  renderDraftNotice("", "");
+
+  try {
+    const response = await fetch("/api/sage/drafts/dry-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_invoice_id: sourceInvoiceId, due_date: draftDueDate.value }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      draftInvoicePreview.innerHTML = "";
+      renderDraftNotice("error", result.error || "This invoice cannot be prepared as a Sage draft.");
+      return;
+    }
+    activeDraftPreview = result.preview;
+    renderDraftPreview(result.preview);
+    renderDraftNotice("success", "Draft details checked. Review the totals, then confirm the one-off Sage action.");
+  } catch (error) {
+    draftInvoicePreview.innerHTML = "";
+    renderDraftNotice("error", "The draft details could not be checked.");
+    console.error(error);
+  } finally {
+    draftDryRunButton.disabled = false;
+    draftDryRunButton.textContent = "Check draft details";
+  }
+}
+
+function renderDraftPreview(preview) {
+  const warnings = preview.warnings && preview.warnings.length > 0
+    ? preview.warnings.map((warning) => '<li>' + escapeHtml(warning) + "</li>").join("")
+    : "<li>No current warnings.</li>";
+  const lines = preview.lines.map((line) => "<tr>" +
+    tableCell(line.description) +
+    tableCell(line.ledger_account) +
+    tableCell(line.tax_rate) +
+    tableCell(formatMoney(line.net_minor / 100)) +
+    tableCell(formatMoney(line.vat_minor / 100)) +
+    tableCell(formatMoney(line.gross_minor / 100)) +
+    "</tr>").join("");
+  const reconciliation = preview.reconciliation
+    ? '<div class="draft-preview-grid">' +
+        draftPreviewCard("Reconciled CSV gross", formatMinorMoney(preview.reconciliation.csv_gross_minor)) +
+        draftPreviewCard("Reconciled PDF gross", formatMinorMoney(preview.reconciliation.pdf_gross_minor)) +
+        draftPreviewCard("Draft gross", formatMoney(preview.totals.gross_minor / 100)) +
+        draftPreviewCard("Reconciled CSV VAT", formatMinorMoney(preview.reconciliation.csv_vat_minor)) +
+        draftPreviewCard("Reconciled PDF VAT", formatMinorMoney(preview.reconciliation.pdf_vat_minor)) +
+        draftPreviewCard("Draft VAT", formatMoney(preview.totals.vat_minor / 100)) +
+      "</div>"
+    : '<p class="cell-muted">No monthly PDF totals were available to compare for this invoice.</p>';
+  draftInvoicePreview.innerHTML =
+    '<div class="draft-preview-grid">' +
+      draftPreviewCard("Customer", preview.customer) +
+      draftPreviewCard("Invoice reference", preview.invoice_reference) +
+      draftPreviewCard("Invoice date", preview.invoice_date) +
+      draftPreviewCard("Due date", preview.due_date) +
+      draftPreviewCard("Net total", formatMoney(preview.totals.net_minor / 100)) +
+      draftPreviewCard("VAT total", formatMoney(preview.totals.vat_minor / 100)) +
+      draftPreviewCard("Gross total", formatMoney(preview.totals.gross_minor / 100)) +
+    "</div>" +
+    '<div class="table-wrap"><table class="draft-line-table"><thead><tr><th>Description</th><th>Ledger account</th><th>Tax rate</th><th>Net</th><th>VAT</th><th>Gross</th></tr></thead><tbody>' + lines + "</tbody></table></div>" +
+    '<div><strong>Reconciliation comparison</strong>' + reconciliation + "</div>" +
+    '<div><strong>Current warnings</strong><ul>' + warnings + "</ul></div>";
+}
+
+function draftPreviewCard(label, value) {
+  return '<article><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(String(value || "-")) + "</strong></article>";
+}
+
+function formatMinorMoney(value) {
+  return typeof value === "number" ? formatMoney(value / 100) : "Not available";
+}
+
+function resetDraftInvoiceWorkspace() {
+  activeDraftSourceInvoiceId = null;
+  activeDraftPreview = null;
+  draftInvoiceEmpty.hidden = false;
+  draftInvoiceWorkspace.hidden = true;
+  draftInvoicePreview.innerHTML = "";
+  draftInvoiceNotice.className = "notice";
+  draftInvoiceNotice.textContent = "";
+  draftConfirmCheckbox.checked = false;
+  draftCreateButton.disabled = true;
+}
+
+function renderDraftNotice(state, message) {
+  draftInvoiceNotice.className = "notice" + (message ? " show" : "") + (state ? " " + state : "");
+  draftInvoiceNotice.textContent = message;
+}
+
+function datePlusDays(value, days) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) {
+    return "";
+  }
+  const date = new Date(value + "T00:00:00Z");
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 async function loadSageStatus() {

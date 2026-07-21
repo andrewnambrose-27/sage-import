@@ -2,7 +2,7 @@
 
 Private MVP for checking old Removals Manager CSV exports before they are prepared for Sage Business Cloud.
 
-This version can connect to Sage Business Cloud Accounting with read-only OAuth status checks. It does not create contacts, invoices or credit notes. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings. Reviewed normalized records can be saved to Cloudflare D1, but uploaded CSV/PDF files are not stored permanently.
+This version can connect to Sage Business Cloud Accounting and, after a separate review, create one sales invoice draft at a time. It never creates contacts, sends invoices, releases/publishes invoices, creates credit notes, or runs a batch import. CSV exports are parsed in memory, normalised for review, and shown in a preview table with row-level warnings. Reviewed normalized records can be saved to Cloudflare D1, but uploaded CSV/PDF files are not stored permanently.
 
 ## Features
 
@@ -25,6 +25,7 @@ This version can connect to Sage Business Cloud Accounting with read-only OAuth 
 - Read-only Sage Business Cloud Accounting OAuth connection status
 - Read-only Sage tax-rate, ledger-account and contact lookup/mapping screens
 - Sage readiness status for reviewed invoices
+- One-at-a-time Sage sales invoice draft preview and creation, with explicit confirmation
 
 ## Local Setup
 
@@ -144,6 +145,7 @@ The migrations live in `migrations/`:
 - `0001_initial_d1_storage.sql`
 - `0002_sage_oauth_token_nonces.sql`
 - `0003_sage_reference_cache_and_mapping_context.sql`
+- `0004_sage_draft_invoice_safety.sql`
 
 They create and extend:
 
@@ -166,7 +168,20 @@ Current hard-coded Sage endpoints live in `src/sage.ts`:
 - Token: `https://oauth.accounting.sage.com/token`
 - Accounting API: `https://api.accounting.sage.com/v3.1`
 
-Do not add Sage write actions until the invoice/contact mapping screens are ready.
+## First Sage Draft Invoice Milestone
+
+The draft workflow is intentionally narrow:
+
+- Save the reviewed batch first. Saved transactions are locked before drafting.
+- Select **Preview draft** beside one `ready_for_sage` invoice.
+- Check the customer, Removals Manager reference, date, due date, line items, tax/ledger mappings, totals and reconciliation comparison.
+- Confirm the due date and tick the one-off confirmation box before **Create one draft invoice in Sage** is enabled.
+
+The app uses `POST /v3.1/sales_invoices` with the official Sage `sales_invoice` request wrapper. It sends `contact_id`, `date`, `due_date`, `reference`, and `invoice_lines`, each with `description`, `quantity`, `unit_price`, `ledger_account_id`, and `tax_rate_id`. It does not call any release, send, email or publish endpoint.
+
+Before creation, the app searches Sage using the `RM inv no.<number>` reference, then reserves the source invoice in D1 using the unique `sage_imports.source_invoice_id` constraint. A confirmed Sage ID is saved as `created`. A network timeout, server error, or response without an ID is recorded as `uncertain` and is never retried automatically; check Sage first. A Sage validation rejection is recorded as `failed`.
+
+The due date defaults to 30 days after the invoice date for the preview. Confirm or change it to the customer’s actual agreed terms before creating the draft.
 
 ## Sage Reference Mappings
 
@@ -190,4 +205,4 @@ An invoice is only marked `ready_for_sage` when it is included, not storage, not
 - Individual invoice PDFs are validated for type and size but are not parsed yet.
 - Rows marked `needs_review` or `exclude_storage` are not export-eligible by default.
 - The D1 save action stores normalized/reconciled row metadata, warnings and raw CSV row values for debugging, not the uploaded files.
-- Sage invoice/contact/credit-note write integration is intentionally not included yet.
+- This milestone creates a single Sage sales invoice draft only. Contact creation, credit notes, sending/releasing, and batch import remain intentionally out of scope.

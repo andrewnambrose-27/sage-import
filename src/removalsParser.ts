@@ -28,6 +28,10 @@ export interface NormalizedTransaction {
   customer_name?: string;
   service_type?: string;
   pdf_match_status?: string;
+  reconciled_csv_amount?: number | null;
+  reconciled_pdf_amount?: number | null;
+  reconciled_csv_vat?: number | null;
+  reconciled_pdf_vat?: number | null;
   classification?: TransactionClassification;
   classification_reasons?: string[];
   export_allowed_by_default?: boolean;

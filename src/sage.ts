@@ -16,6 +16,10 @@ export const sageReadOnlyPaths = {
   contacts: "/contacts",
 };
 
+export const sageDraftInvoicePaths = {
+  salesInvoices: "/sales_invoices",
+};
+
 export interface SageConnectionConfig {
   clientId: string;
   clientSecret: string;
@@ -445,6 +449,47 @@ export async function searchSageContacts(client: SageApiClient, search: string):
     throw new SageBusinessLookupError("Sage contacts could not be searched.");
   }
   return response.json();
+}
+
+export async function searchSageSalesInvoices(client: SageApiClient, search: string): Promise<unknown> {
+  const params = new URLSearchParams();
+  params.set("search", search);
+  const response = await client.request(`${sageDraftInvoicePaths.salesInvoices}?${params.toString()}`);
+  if (!response.ok) {
+    throw new SageBusinessLookupError("Sage sales invoices could not be searched.");
+  }
+  return response.json();
+}
+
+export async function createSageDraftInvoice(client: SageApiClient, payload: unknown): Promise<unknown> {
+  const response = await client.request(sageDraftInvoicePaths.salesInvoices, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const status = response.status;
+    if (status >= 500) {
+      throw new SageUncertainResultError();
+    }
+    throw new SageDraftInvoiceRequestError(status);
+  }
+  return response.json();
+}
+
+export class SageUncertainResultError extends Error {
+  constructor(message = "Sage did not return a reliable result. Check Sage before trying again.") {
+    super(message);
+    this.name = "SageUncertainResultError";
+  }
+}
+
+export class SageDraftInvoiceRequestError extends Error {
+  constructor(public readonly status: number) {
+    super("Sage rejected the draft invoice.");
+    this.name = "SageDraftInvoiceRequestError";
+  }
 }
 
 export function expiryFromNow(expiresInSeconds: number): string {

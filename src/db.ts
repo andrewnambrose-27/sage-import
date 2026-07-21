@@ -69,6 +69,23 @@ export interface SaveReviewedBatchResult {
   invoices: SourceInvoiceRecord[];
 }
 
+export interface SageImportRecord {
+  id: string;
+  source_invoice_id: string;
+  sage_contact_id: string | null;
+  sage_invoice_id: string | null;
+  import_status: SageImportStatus;
+  attempt_count: number;
+  error_code: string | null;
+  safe_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SageImportReservation =
+  | { reserved: true; record: SageImportRecord }
+  | { reserved: false; record: SageImportRecord };
+
 export class DuplicateSourceInvoiceError extends Error {
   constructor(message = "One or more source invoices have already been saved.") {
     super(message);
@@ -307,6 +324,112 @@ export class ImportDatabase {
 
     return new Set((result.results ?? []).map((row) => row.source_invoice_id));
   }
+
+  async getSourceInvoice(id: string): Promise<SourceInvoiceRecord | null> {
+    return (await this.db.prepare("SELECT * FROM source_invoices WHERE id = ?").bind(id).first<SourceInvoiceRecord>()) ?? null;
+  }
+
+  async listInvoiceLinesForSourceInvoice(sourceInvoiceId: string): Promise<SourceInvoiceRecord[]> {
+    const anchor = await this.getSourceInvoice(sourceInvoiceId);
+    if (!anchor || !anchor.rm_invoice_number) {
+      return anchor ? [anchor] : [];
+    }
+
+    const result = await this.db.prepare(
+      `SELECT * FROM source_invoices
+       WHERE import_batch_id = ? AND rm_invoice_number = ?
+       ORDER BY rowid`,
+    ).bind(anchor.import_batch_id, anchor.rm_invoice_number).all<SourceInvoiceRecord>();
+    return result.results ?? [];
+  }
+
+  async getSageImport(sourceInvoiceId: string): Promise<SageImportRecord | null> {
+    return (await this.db.prepare(
+      "SELECT * FROM sage_imports WHERE source_invoice_id = ?",
+    ).bind(sourceInvoiceId).first<SageImportRecord>()) ?? null;
+  }
+
+  async reserveSageImport(sourceInvoiceId: string, sageContactId: string): Promise<SageImportReservation> {
+    const existing = await this.getSageImport(sourceInvoiceId);
+    if (existing) {
+      return { reserved: false, record: existing };
+    }
+
+    const now = new Date().toISOString();
+    const record: SageImportRecord = {
+      id: createId(),
+      source_invoice_id: sourceInvoiceId,
+      sage_contact_id: sageContactId,
+      sage_invoice_id: null,
+      import_status: "pending",
+      attempt_count: 1,
+      error_code: null,
+      safe_error_message: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    try {
+      await this.db.prepare(
+        `INSERT INTO sage_imports (
+          id, source_invoice_id, sage_contact_id, sage_invoice_id, import_status,
+          attempt_count, error_code, safe_error_message, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        record.id, record.source_invoice_id, record.sage_contact_id, record.sage_invoice_id,
+        record.import_status, record.attempt_count, record.error_code, record.safe_error_message,
+        record.created_at, record.updated_at,
+      ).run();
+      return { reserved: true, record };
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+      const concurrent = await this.getSageImport(sourceInvoiceId);
+      if (!concurrent) {
+        throw error;
+      }
+      return { reserved: false, record: concurrent };
+    }
+  }
+
+  async markSageImportCreated(sourceInvoiceId: string, sageInvoiceId: string): Promise<void> {
+    await this.updateSageImport(sourceInvoiceId, "created", {
+      sageInvoiceId,
+      errorCode: null,
+      safeErrorMessage: null,
+    });
+  }
+
+  async markSageImportUncertain(sourceInvoiceId: string, message: string): Promise<void> {
+    await this.updateSageImport(sourceInvoiceId, "uncertain", {
+      errorCode: "uncertain_result",
+      safeErrorMessage: message,
+    });
+  }
+
+  async markSageImportFailed(sourceInvoiceId: string, message: string, errorCode = "sage_request_failed"): Promise<void> {
+    await this.updateSageImport(sourceInvoiceId, "failed", {
+      errorCode,
+      safeErrorMessage: message,
+    });
+  }
+
+  private async updateSageImport(
+    sourceInvoiceId: string,
+    status: SageImportStatus,
+    values: { sageInvoiceId?: string | null; errorCode: string | null; safeErrorMessage: string | null },
+  ): Promise<void> {
+    await this.db.prepare(
+      `UPDATE sage_imports
+       SET sage_invoice_id = COALESCE(?, sage_invoice_id), import_status = ?, error_code = ?,
+           safe_error_message = ?, updated_at = ?
+       WHERE source_invoice_id = ?`,
+    ).bind(
+      values.sageInvoiceId ?? null, status, values.errorCode, values.safeErrorMessage,
+      new Date().toISOString(), sourceInvoiceId,
+    ).run();
+  }
 }
 
 interface SageReferenceMappingRow {
@@ -421,6 +544,10 @@ function buildRawSourcePayload(row: PersistableSourceInvoice): Record<string, un
     reference: row.reference,
     tax_code: row.tax_code,
     pdf_match_status: row.pdf_match_status,
+    reconciled_csv_amount: row.reconciled_csv_amount,
+    reconciled_pdf_amount: row.reconciled_pdf_amount,
+    reconciled_csv_vat: row.reconciled_csv_vat,
+    reconciled_pdf_vat: row.reconciled_pdf_vat,
     classification_reasons: row.classification_reasons,
   };
 }
