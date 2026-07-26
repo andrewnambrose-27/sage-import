@@ -58,7 +58,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-20";
+const APP_ASSET_VERSION = "20260726-21";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -580,12 +580,17 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
 
   try {
     const [contactData, savedMappings] = await Promise.all([
-      searchSageContacts(client.value, isUnnamedCustomerSelection ? "" : customerName || normalizedCustomerName),
+      searchSageContacts(client.value, ""),
       database.value.listCustomerMappings((await activeSageBusinessId(env)) ?? ""),
     ]);
     const matchesById = new Map(parseSageContactItems(contactData).map((match) => [match.sage_contact_id, match]));
-    const matches = [...matchesById.values()];
     const normalized = normalizedCustomerName || normalizeForClient(customerName);
+    const matches = [...matchesById.values()].sort((left, right) => {
+      const leftExact = left.normalized_display_name === normalized ? 1 : 0;
+      const rightExact = right.normalized_display_name === normalized ? 1 : 0;
+      return rightExact - leftExact || left.sage_contact_display_name.localeCompare(right.sage_contact_display_name);
+    });
+    const matchStatus = contactMatchStatus(normalized, matches);
     console.log("Sage contact search completed", {
       mode: isUnnamedCustomerSelection ? "all_contacts" : "named_search",
       returnedContacts: matches.length,
@@ -596,11 +601,13 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
       customer_name: customerName,
       normalized_customer_name: normalized,
       matches,
-      match_status: contactMatchStatus(normalized, matches),
+      match_status: matchStatus,
       saved_mapping: savedMappings.find((mapping) => mapping.normalized_customer_name === normalized) ?? null,
       missing_contact_message: matches.length === 0
-        ? "Sage returned no contacts. Check the connected Sage business, then try again."
-        : `Sage returned ${matches.length} contact${matches.length === 1 ? "" : "s"}. Choose the confirmed contact manually.`,
+        ? "Sage returned no customer contacts. Check the connected Sage business, then try again."
+        : matchStatus === "single_exact"
+          ? `Exact name match found. ${matches.length} Sage customer${matches.length === 1 ? " is" : "s are"} available; confirm the correct one manually.`
+          : `No exact name match was found. ${matches.length} Sage customer${matches.length === 1 ? " is" : "s are"} available to choose manually.`,
     });
   } catch (error) {
     if (error instanceof SageAuthorizationError) {
@@ -684,6 +691,7 @@ async function handleSagePlaceholderContactCreate(request: Request, env: Env): P
       already_mapped: true,
       sage_contact_id: existingMapping.sage_contact_id,
       sage_contact_display_name: existingMapping.sage_contact_display_name,
+      needs_completion: existingMapping.postcode === "TEST",
     });
   }
 
@@ -2745,6 +2753,31 @@ table {
   background: #ffffff;
 }
 
+.mapping-row.contact-mapped {
+  border-color: #8fc6ba;
+  background: #f2faf7;
+  box-shadow: 0 0 0 2px rgba(15, 107, 91, 0.06);
+}
+
+.contact-linked-details {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #b9d9d1;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.contact-linked-details span,
+.contact-linked-details strong {
+  display: block;
+}
+
+.contact-linked-details span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
 .mapping-row strong,
 .mapping-row small {
   display: block;
@@ -4035,37 +4068,35 @@ function renderCustomerMappings() {
 
   customerMappingBody.innerHTML = customers.map((customer) => {
     const saved = sageReferences.customer_mappings.find((mapping) => mapping.normalized_customer_name === customer.normalized);
-    const matches = [...(customer.matches || [])];
-    if (saved && !matches.some((match) => match.sage_contact_id === saved.sage_contact_id)) {
-      matches.unshift({
-        sage_contact_id: saved.sage_contact_id,
-        sage_contact_display_name: saved.sage_contact_display_name,
-      });
+    if (saved) {
+      const savedLabel = saved.postcode === "TEST" ? "Contact added in Sage" : "Available in Sage and saved";
+      return '<div class="mapping-row contact-mapped">' +
+        '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small><small>Saved contact: ' + escapeHtml(saved.sage_contact_display_name) + '</small></div>' +
+        '<div class="contact-linked-details"><span>Sage customer</span><strong>' + escapeHtml(saved.sage_contact_display_name) + '</strong></div>' +
+        '<div class="contact-actions"><span class="contact-saved-status">' + savedLabel + '</span></div>' +
+        '</div>';
     }
+    const matches = [...(customer.matches || [])];
     const contactOptions = matches.map((match) =>
       '<option value="' + escapeHtml(match.sage_contact_id) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
     ).join("");
     const hasMatches = matches.length > 0;
     const select = hasMatches
-      ? '<select id="contact-' + slug(customer.normalized) + '"' + (saved ? " disabled" : "") + '>' + contactOptions + '</select>'
+      ? '<select id="contact-' + slug(customer.normalized) + '">' + contactOptions + '</select>'
       : '<select id="contact-' + slug(customer.normalized) + '" disabled><option>Search Sage first</option></select>';
     const matchText = customer.match_status === "ambiguous"
       ? '<small>Multiple possible matches. Please choose manually.</small>'
       : customer.missing_contact_message
         ? '<small>' + escapeHtml(customer.missing_contact_message) + '</small>'
         : "";
-    const canCreatePlaceholder = customer.normalized !== "__unnamed_customer__" && !saved;
-    const savedStatus = saved
-      ? '<span class="contact-saved-status">' + (saved.postcode === "TEST" ? "Contact added in Sage" : "Available in Sage and saved") + '</span>'
-      : '';
+    const canCreatePlaceholder = customer.normalized !== "__unnamed_customer__";
 
     return '<div class="mapping-row">' +
-      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small>' + (saved ? '<small>Saved contact: ' + escapeHtml(saved.sage_contact_display_name) + '</small>' : '<small>Not mapped yet</small>') + matchText + '</div>' +
+      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small><small>Not mapped yet</small>' + matchText + '</div>' +
       select +
       '<div class="contact-actions">' +
-        savedStatus +
-        (!saved ? '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Refresh and search</button>' : '') +
-        (!saved ? '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' : '') +
+        '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Load Sage contacts</button>' +
+        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' +
         (canCreatePlaceholder ? '<button class="secondary-button placeholder-contact-button" type="button" data-create-placeholder-contact="' + escapeHtml(customer.normalized) + '">Create with TEST details</button>' : '') +
       '</div>' +
       '</div>';
@@ -4169,7 +4200,7 @@ async function searchContact(normalizedCustomerName) {
   const button = customerMappingBody.querySelector('[data-search-contact="' + cssEscape(normalizedCustomerName) + '"]');
   if (button) {
     button.disabled = true;
-    button.textContent = "Searching Sage...";
+    button.textContent = "Loading contacts...";
   }
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12_000);
@@ -4195,7 +4226,7 @@ async function searchContact(normalizedCustomerName) {
         row.contact_search = result;
       }
     }
-    renderMappingNotice(result.match_status === "none" ? "error" : "success", result.missing_contact_message || "Contact search complete. Confirm the correct match manually.");
+    renderMappingNotice(result.matches?.length ? "success" : "error", result.missing_contact_message || "Sage contacts loaded. Confirm the correct match manually.");
     renderCustomerMappings();
   } catch (error) {
     renderMappingNotice("error", error.name === "AbortError"
@@ -4206,7 +4237,7 @@ async function searchContact(normalizedCustomerName) {
     window.clearTimeout(timeout);
     if (button && button.isConnected) {
       button.disabled = false;
-      button.textContent = "Refresh and search";
+      button.textContent = "Load Sage contacts";
     }
   }
 }
@@ -4251,6 +4282,9 @@ async function createPlaceholderContact(normalizedCustomerName, options = {}) {
         ? customer.name + " is already linked to " + result.sage_contact_display_name + "."
         : "Contact added: " + customer.name + ". Complete the TEST address details in Sage before sending the invoice.");
     }
+    rememberCustomerMapping(customer, result);
+    renderCustomerMappings();
+    void refreshSageReadiness();
     if (!options.deferRefresh) {
       await loadSageReferences();
     }
@@ -4268,6 +4302,20 @@ async function createPlaceholderContact(normalizedCustomerName, options = {}) {
       button.textContent = "Create with TEST details";
     }
   }
+}
+
+function rememberCustomerMapping(customer, result) {
+  const mapping = {
+    normalized_customer_name: customer.normalized,
+    sage_contact_id: result.sage_contact_id,
+    sage_contact_display_name: result.sage_contact_display_name,
+    customer_email: null,
+    postcode: result.needs_completion ? "TEST" : null,
+    manually_confirmed: true,
+  };
+  sageReferences.customer_mappings = sageReferences.customer_mappings
+    .filter((saved) => saved.normalized_customer_name !== customer.normalized)
+    .concat(mapping);
 }
 
 async function createAllMissingContacts() {
