@@ -1366,7 +1366,10 @@ function uploadPage(): string {
                 <h3>Removal invoices CSV</h3>
                 <p>Use the main removals invoice export from Removals Manager.</p>
               </div>
-              <label for="removalInvoices">Choose CSV or drop here</label>
+              <div class="file-card-actions">
+                <label for="removalInvoices">Choose CSV or drop here</label>
+                <button class="file-remove-button" type="button" data-remove-file="removalInvoices" hidden>Remove file</button>
+              </div>
               <input id="removalInvoices" type="file" accept=".csv,text/csv">
               <p class="field-message" id="removalInvoicesMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1376,7 +1379,10 @@ function uploadPage(): string {
                 <h3>Removal deposits CSV</h3>
                 <p>Use this if deposits are exported separately from invoices.</p>
               </div>
-              <label for="removalDeposits">Choose CSV or drop here</label>
+              <div class="file-card-actions">
+                <label for="removalDeposits">Choose CSV or drop here</label>
+                <button class="file-remove-button" type="button" data-remove-file="removalDeposits" hidden>Remove file</button>
+              </div>
               <input id="removalDeposits" type="file" accept=".csv,text/csv">
               <p class="field-message" id="removalDepositsMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1386,7 +1392,10 @@ function uploadPage(): string {
                 <h3>Ad Hoc invoices CSV</h3>
                 <p>Use the ad hoc invoice export if Removals Manager provides one.</p>
               </div>
-              <label for="adHocInvoices">Choose CSV or drop here</label>
+              <div class="file-card-actions">
+                <label for="adHocInvoices">Choose CSV or drop here</label>
+                <button class="file-remove-button" type="button" data-remove-file="adHocInvoices" hidden>Remove file</button>
+              </div>
               <input id="adHocInvoices" type="file" accept=".csv,text/csv">
               <p class="field-message" id="adHocInvoicesMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1396,7 +1405,10 @@ function uploadPage(): string {
                 <h3>Credit notes CSV</h3>
                 <p>Add credit notes here if Removals Manager can export them.</p>
               </div>
-              <label for="creditNotes">Choose CSV or drop here</label>
+              <div class="file-card-actions">
+                <label for="creditNotes">Choose CSV or drop here</label>
+                <button class="file-remove-button" type="button" data-remove-file="creditNotes" hidden>Remove file</button>
+              </div>
               <input id="creditNotes" type="file" accept=".csv,text/csv">
               <p class="field-message" id="creditNotesMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1406,7 +1418,10 @@ function uploadPage(): string {
                 <h3>Monthly invoice report PDF</h3>
                 <p>Add the monthly invoice report PDF if it is available for checking later.</p>
               </div>
-              <label for="monthlyReport">Choose PDF or drop here</label>
+              <div class="file-card-actions">
+                <label for="monthlyReport">Choose PDF or drop here</label>
+                <button class="file-remove-button" type="button" data-remove-file="monthlyReport" hidden>Remove file</button>
+              </div>
               <input id="monthlyReport" type="file" accept=".pdf,application/pdf">
               <p class="field-message" id="monthlyReportMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1416,7 +1431,10 @@ function uploadPage(): string {
                 <h3>Individual invoice PDFs</h3>
                 <p>Add a batch of invoice PDFs if you have them. Multiple files are allowed.</p>
               </div>
-              <label for="invoicePdfs">Choose PDFs or drop here</label>
+              <div class="file-card-actions">
+                <label for="invoicePdfs">Choose PDFs or drop here</label>
+                <button class="file-remove-button" type="button" data-remove-file="invoicePdfs" hidden>Remove files</button>
+              </div>
               <input id="invoicePdfs" type="file" accept=".pdf,application/pdf" multiple>
               <p class="field-message" id="invoicePdfsMessage">No files selected yet. This is optional.</p>
             </article>
@@ -1983,6 +2001,30 @@ h2 {
   background: var(--sage-dark);
 }
 
+.file-card-actions {
+  display: grid;
+  justify-items: stretch;
+  gap: 8px;
+}
+
+.file-remove-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.file-remove-button:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .file-card input {
   position: absolute;
   width: 1px;
@@ -2510,6 +2552,12 @@ for (const slot of uploadSlots) {
   const input = document.querySelector("#" + slot.id);
   input.addEventListener("change", () => updateFieldMessage(slot));
 
+  const removeButton = document.querySelector('[data-remove-file="' + slot.id + '"]');
+  removeButton.addEventListener("click", () => {
+    input.value = "";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
   const card = input.closest(".file-card");
   for (const eventName of ["dragenter", "dragover"]) {
     card.addEventListener(eventName, (event) => {
@@ -2822,6 +2870,7 @@ clearButton.addEventListener("click", () => {
   uploadForm.reset();
   for (const slot of uploadSlots) {
     setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
+    document.querySelector('[data-remove-file="' + slot.id + '"]').hidden = true;
   }
   summaryNotice.className = "notice";
   summaryNotice.textContent = "";
@@ -2836,6 +2885,8 @@ clearButton.addEventListener("click", () => {
 
 function updateFieldMessage(slot) {
   const files = getFiles(slot);
+  document.querySelector('[data-remove-file="' + slot.id + '"]').hidden = files.length === 0;
+  clearButton.disabled = !uploadSlots.some((item) => getFiles(item).length > 0);
   if (files.length === 0) {
     setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
     return;
