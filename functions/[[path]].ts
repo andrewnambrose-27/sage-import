@@ -51,7 +51,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-4";
+const APP_ASSET_VERSION = "20260726-5";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1351,7 +1351,7 @@ function uploadPage(): string {
         <section class="upload-workflow" aria-labelledby="upload-title">
           <div class="section-heading">
             <div>
-              <h2 id="upload-title">File upload</h2>
+              <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2></div>
               <p>Start with the main removal invoices CSV. Add deposits, ad hoc invoices, credit notes and PDFs where you have them, then check the files before moving on.</p>
             </div>
             <div class="button-row">
@@ -1462,7 +1462,7 @@ function uploadPage(): string {
         <section class="results-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <h2>Parsed preview</h2>
+              <div class="step-title"><span class="step-badge">2</span><h2>Check the import</h2></div>
               <p id="resultsIntro">Choose any files you have, then select Check files.</p>
             </div>
           </div>
@@ -1505,7 +1505,7 @@ function uploadPage(): string {
         <section class="results-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <h2>Reconciliation</h2>
+              <div class="step-title"><span class="step-badge substep">2</span><h2>Reconciliation</h2></div>
               <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
             </div>
           </div>
@@ -1534,7 +1534,7 @@ function uploadPage(): string {
         <section class="results-panel review-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <h2>Review transactions</h2>
+              <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2></div>
               <p id="reviewIntro">This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.</p>
             </div>
             <div class="button-row">
@@ -1563,6 +1563,7 @@ function uploadPage(): string {
             <table class="review-table">
               <thead>
                 <tr>
+                  <th class="review-action-cell">Action</th>
                   <th>Invoice</th>
                   <th>Date</th>
                   <th>Customer</th>
@@ -1575,7 +1576,6 @@ function uploadPage(): string {
                   <th>Classification</th>
                   <th>Warnings</th>
                   <th>Sage readiness</th>
-                  <th>Action</th>
                 </tr>
               </thead>
               <tbody id="reviewBody">
@@ -1588,7 +1588,7 @@ function uploadPage(): string {
         <section class="results-panel mapping-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <h2>Sage mappings</h2>
+              <div class="step-title"><span class="step-badge">4</span><h2>Map to Sage</h2></div>
               <p id="mappingIntro">Map Removals Manager tax codes, nominal codes and customers to existing Sage records before any future Sage export.</p>
             </div>
             <div class="button-row">
@@ -1624,7 +1624,7 @@ function uploadPage(): string {
         <section class="results-panel draft-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <h2>Prepare one Sage draft invoice</h2>
+              <div class="step-title"><span class="step-badge">5</span><h2>Prepare one Sage draft invoice</h2></div>
               <p>Choose a saved, Sage-ready invoice from the review table. This stage creates a draft only; it never sends, releases or publishes an invoice.</p>
             </div>
           </div>
@@ -2143,6 +2143,34 @@ h2 {
   margin-bottom: 18px;
 }
 
+.step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.step-title h2 {
+  margin: 0;
+}
+
+.step-badge {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  place-items: center;
+  background: var(--sage);
+  color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.step-badge.substep {
+  background: #dcefe9;
+  color: var(--sage-dark);
+}
+
 .filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -2208,6 +2236,28 @@ table {
 
 .review-table {
   min-width: 1430px;
+}
+
+.review-action-cell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 174px;
+  background: #ffffff;
+  box-shadow: 8px 0 10px -12px rgba(31, 49, 54, 0.45);
+}
+
+.review-table thead .review-action-cell {
+  z-index: 3;
+  background: #eef5f3;
+}
+
+.review-table tr.risky-row .review-action-cell {
+  background: #fff9f6;
+}
+
+.review-table tr.high-risk .review-action-cell {
+  background: #fff4f3;
 }
 
 .mapping-grid {
@@ -3189,6 +3239,7 @@ function renderReviewTable() {
     const warnings = row.warnings.length > 0 ? row.warnings.join(" ") : "OK";
     const riskClass = reviewRiskClass(row);
     return '<tr class="' + riskClass + '">' +
+      '<td class="review-action-cell">' + reviewActionSelect(row) + draftPreviewButton(row) + '</td>' +
       tableCell(row.invoice_number || "-") +
       tableCell(row.date || "-") +
       tableCell(row.customer_name || "-") +
@@ -3201,7 +3252,6 @@ function renderReviewTable() {
       '<td><span class="badge ' + badgeClassForClassification(row.classification) + '">' + escapeHtml(formatStatus(row.classification || "needs_review")) + "</span></td>" +
       '<td><span class="badge' + (row.warnings.length > 0 ? " warning" : "") + '">' + escapeHtml(warnings) + "</span></td>" +
       '<td><span class="badge ' + badgeClassForReadiness(row.sage_readiness) + '">' + escapeHtml(formatStatus(row.sage_readiness || "not_checked")) + "</span></td>" +
-      '<td>' + reviewActionSelect(row) + draftPreviewButton(row) + '</td>' +
       "</tr>";
   }).join("");
 }
