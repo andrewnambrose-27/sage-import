@@ -111,7 +111,7 @@ describe("SageApiClient", () => {
     }));
     await store.replaceTokens("old-access", "refresh-token");
     let businessRequestCount = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/businesses")) {
         businessRequestCount += 1;
@@ -138,7 +138,7 @@ describe("SageApiClient", () => {
   it("fetches direct-array ledger accounts and follows pagination headers", async () => {
     const store = new MemorySageStore(connectionRecord());
     await store.replaceTokens("access-token", "refresh-token");
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       const item = url.includes("page=1")
         ? { id: "ledger-4010", nominal_code: "4010", displayed_as: "Sales - Services" }
@@ -153,6 +153,8 @@ describe("SageApiClient", () => {
     expect(result.items.map((item) => item.id)).toEqual(["ledger-4010", "ledger-4000"]);
     expect(result.diagnostics).toHaveLength(2);
     expect(String(fetchMock.mock.calls[0][0])).toContain("attributes=all");
+    const requestHeaders = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(requestHeaders.get("X-Business")).toBe("business-1");
   });
 
   it("rejects an unexpected reference response shape instead of returning an empty list", async () => {

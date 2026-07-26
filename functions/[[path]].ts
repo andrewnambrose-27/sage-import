@@ -55,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-10";
+const APP_ASSET_VERSION = "20260726-11";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1587,8 +1587,8 @@ function uploadPage(): string {
               <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
+          <div id="reconciliationTableWrap" class="table-wrap reconciliation-table-wrap preview-collapsed">
+            <table class="reconciliation-table">
               <thead>
                 <tr>
                   <th>Invoice</th>
@@ -1607,6 +1607,7 @@ function uploadPage(): string {
               </tbody>
             </table>
           </div>
+          <div class="preview-actions"><button id="toggleReconciliationButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
         </section>
 
         <section class="results-panel review-panel" aria-live="polite">
@@ -2342,9 +2343,10 @@ h2 {
   border-radius: 8px;
 }
 
-.summary-table-wrap.preview-collapsed {
+.summary-table-wrap.preview-collapsed,
+.reconciliation-table-wrap.preview-collapsed {
   max-height: 390px;
-  overflow-y: hidden;
+  overflow-y: scroll;
 }
 
 .summary-table {
@@ -2362,6 +2364,15 @@ h2 {
   max-width: 320px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.reconciliation-table {
+  min-width: 980px;
+}
+
+.reconciliation-table-wrap td:last-child {
+  min-width: 320px;
+  white-space: normal;
 }
 
 table {
@@ -2881,6 +2892,8 @@ const clearButton = document.querySelector("#clearButton");
 const checkButton = document.querySelector("#checkButton");
 const summaryTableWrap = document.querySelector("#summaryTableWrap");
 const togglePreviewButton = document.querySelector("#togglePreviewButton");
+const reconciliationTableWrap = document.querySelector("#reconciliationTableWrap");
+const toggleReconciliationButton = document.querySelector("#toggleReconciliationButton");
 const reviewBody = document.querySelector("#reviewBody");
 const reviewIntro = document.querySelector("#reviewIntro");
 const reviewFilters = document.querySelector("#reviewFilters");
@@ -2917,6 +2930,7 @@ let sageReferences = emptySageReferences();
 let activeDraftSourceInvoiceId = null;
 let activeDraftPreview = null;
 let previewExpanded = false;
+let reconciliationExpanded = false;
 let referenceAutoRefreshAttempted = false;
 const uploadSlots = [
   {
@@ -3018,6 +3032,12 @@ togglePreviewButton.addEventListener("click", () => {
   previewExpanded = !previewExpanded;
   summaryTableWrap.classList.toggle("preview-collapsed", !previewExpanded);
   togglePreviewButton.textContent = previewExpanded ? "Show fewer rows" : "Show all rows";
+});
+
+toggleReconciliationButton.addEventListener("click", () => {
+  reconciliationExpanded = !reconciliationExpanded;
+  reconciliationTableWrap.classList.toggle("preview-collapsed", !reconciliationExpanded);
+  toggleReconciliationButton.textContent = reconciliationExpanded ? "Show fewer rows" : "Show all rows";
 });
 
 reviewFilters.addEventListener("click", (event) => {
@@ -3402,6 +3422,14 @@ function updatePreviewToggle(rowCount) {
   summaryTableWrap.classList.toggle("preview-collapsed", hasMoreRows);
   togglePreviewButton.hidden = !hasMoreRows;
   togglePreviewButton.textContent = "Show all rows";
+}
+
+function updateReconciliationToggle(rowCount) {
+  const hasMoreRows = rowCount > 3;
+  reconciliationExpanded = false;
+  reconciliationTableWrap.classList.toggle("preview-collapsed", hasMoreRows);
+  toggleReconciliationButton.hidden = !hasMoreRows;
+  toggleReconciliationButton.textContent = "Show all rows";
 }
 
 function validateSlot(slot) {
@@ -4505,6 +4533,8 @@ function renderReconciliation(rows) {
     return;
   }
 
+  updateReconciliationToggle(rows.length);
+
   const issueCount = rows.filter((row) => row.status !== "matched").length;
   reconciliationIntro.textContent = issueCount === 0
     ? rows.length + " invoice" + plural(rows.length) + " matched the monthly PDF report. Matching is a check only, not an approval."
@@ -4527,6 +4557,7 @@ function renderReconciliation(rows) {
 }
 
 function renderReconciliationEmpty(message) {
+  updateReconciliationToggle(0);
   reconciliationBody.innerHTML = '<tr><td colspan="9" class="empty-state">' + escapeHtml(message) + "</td></tr>";
 }
 

@@ -439,6 +439,8 @@ export class SageApiClient {
     const { accessToken } = await decryptTokenPair(current, this.config.tokenEncryptionKey);
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${accessToken}`);
+    headers.set("X-Business", current.sage_business_id);
+    headers.set("Accept", "application/json");
 
     return {
       connection: current,
