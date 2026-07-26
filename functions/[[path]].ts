@@ -55,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-8";
+const APP_ASSET_VERSION = "20260726-9";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1628,6 +1628,12 @@ function uploadPage(): string {
             <button type="button" class="filter-button" data-filter="mismatches">Mismatches</button>
             <button type="button" class="filter-button" data-filter="missing_customer">Missing customer</button>
           </div>
+          <div id="reviewBatchActions" class="button-row review-batch-actions">
+            <span>Apply to visible rows:</span>
+            <button type="button" class="secondary-button" data-batch-review="include">Include</button>
+            <button type="button" class="secondary-button" data-batch-review="exclude">Exclude</button>
+            <button type="button" class="secondary-button" data-batch-review="review">Mark for review</button>
+          </div>
           <div id="reviewTotals" class="summary-cards review-totals">
             <article><strong>0</strong><span>Included rows</span></article>
             <article><strong>0.00</strong><span>Included net</span></article>
@@ -2833,6 +2839,7 @@ const checkButton = document.querySelector("#checkButton");
 const reviewBody = document.querySelector("#reviewBody");
 const reviewIntro = document.querySelector("#reviewIntro");
 const reviewFilters = document.querySelector("#reviewFilters");
+const reviewBatchActions = document.querySelector("#reviewBatchActions");
 const reviewTotals = document.querySelector("#reviewTotals");
 const exportReviewButton = document.querySelector("#exportReviewButton");
 const saveBatchButton = document.querySelector("#saveBatchButton");
@@ -2969,6 +2976,30 @@ reviewFilters.addEventListener("click", (event) => {
     filterButton.classList.toggle("active", filterButton === button);
   }
   renderReviewTable();
+});
+
+reviewBatchActions.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-batch-review]") : null;
+  if (!button || reviewRows.length === 0) {
+    return;
+  }
+
+  const decision = button.dataset.batchReview;
+  const visibleRows = reviewRows.filter(matchesActiveReviewFilter);
+  let changed = 0;
+  let skippedStorage = 0;
+  for (const row of visibleRows) {
+    if (decision === "include" && row.classification === "exclude_storage") {
+      skippedStorage += 1;
+      continue;
+    }
+    row.review_decision = decision;
+    changed += 1;
+  }
+  reviewSaveNotice.className = "notice success";
+  reviewSaveNotice.textContent = changed + " visible row" + plural(changed) + " updated." + (skippedStorage ? " " + skippedStorage + " storage row" + plural(skippedStorage) + " remain excluded for safety." : "");
+  renderReviewTable();
+  refreshSageReadiness();
 });
 
 reviewBody.addEventListener("change", (event) => {

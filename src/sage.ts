@@ -748,6 +748,7 @@ function withPagination(path: string, page: number, itemsPerPage: number): strin
   const url = new URL(path, "https://sage-import.invalid");
   url.searchParams.set("items_per_page", String(itemsPerPage));
   url.searchParams.set("page", String(page));
+  url.searchParams.set("attributes", "all");
   return `${url.pathname}${url.search}`;
 }
 

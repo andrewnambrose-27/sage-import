@@ -111,7 +111,7 @@ describe("SageApiClient", () => {
     }));
     await store.replaceTokens("old-access", "refresh-token");
     let businessRequestCount = 0;
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/businesses")) {
         businessRequestCount += 1;
@@ -125,7 +125,8 @@ describe("SageApiClient", () => {
         refresh_token: "retry-refresh",
         expires_in: 3600,
       });
-    }) as unknown as typeof fetch;
+    });
+    const fetcher = fetchMock as unknown as typeof fetch;
 
     const client = new SageApiClient(store, config, fetcher);
     const response = await client.request("/businesses");
@@ -137,7 +138,7 @@ describe("SageApiClient", () => {
   it("fetches direct-array ledger accounts and follows pagination headers", async () => {
     const store = new MemorySageStore(connectionRecord());
     await store.replaceTokens("access-token", "refresh-token");
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       const item = url.includes("page=1")
         ? { id: "ledger-4010", nominal_code: "4010", displayed_as: "Sales - Services" }
@@ -145,11 +146,13 @@ describe("SageApiClient", () => {
       return jsonResponse([item], {
         headers: { "Content-Type": "application/json", "X-Pagination-TotalPages": "2", "X-Pagination-TotalItems": "2" },
       });
-    }) as unknown as typeof fetch;
+    });
+    const fetcher = fetchMock as unknown as typeof fetch;
 
     const result = await fetchSageLedgerAccounts(new SageApiClient(store, config, fetcher));
     expect(result.items.map((item) => item.id)).toEqual(["ledger-4010", "ledger-4000"]);
     expect(result.diagnostics).toHaveLength(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("attributes=all");
   });
 
   it("rejects an unexpected reference response shape instead of returning an empty list", async () => {
