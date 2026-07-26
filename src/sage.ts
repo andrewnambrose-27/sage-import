@@ -16,6 +16,10 @@ export const sageReadOnlyPaths = {
   contacts: "/contacts",
 };
 
+export const sageContactPaths = {
+  contacts: "/contacts",
+};
+
 export const sageDraftInvoicePaths = {
   salesInvoices: "/sales_invoices",
 };
@@ -168,6 +172,33 @@ export interface SageLedgerAccountReference {
   visible: boolean | null;
   active: boolean | null;
   defaultTaxRateId: string | null;
+}
+
+export interface SagePlaceholderCustomerPayload {
+  contact: {
+    name: string;
+    contact_type_ids: ["CUSTOMER"];
+    notes: string;
+    main_address: {
+      name: "TEST";
+      address_line_1: "TEST";
+      address_line_2: "TEST";
+      city: "TEST";
+      region: "TEST";
+      postal_code: "TEST";
+      is_main_address: true;
+    };
+    main_contact_person: {
+      name: string;
+      contact_person_type_ids: ["ACCOUNTS"];
+      is_main_contact: true;
+    };
+  };
+}
+
+export interface SageCreatedContact {
+  id: string;
+  displayName: string;
 }
 
 export function createSageAuthorizationUrl(config: Pick<SageConnectionConfig, "clientId" | "redirectUri">, state: string): string {
@@ -529,14 +560,15 @@ export function normalizeSageLedgerAccount(item: Record<string, unknown>): SageL
 export async function searchSageContacts(client: SageApiClient, search: string): Promise<unknown> {
   const params = new URLSearchParams();
   if (search.trim()) params.set("search", search);
-  params.set("items_per_page", "200");
+  params.set("contact_type_id", "CUSTOMER");
+  params.set("items_per_page", "50");
   const items: unknown[] = [];
   const seenPages = new Set<number>();
   for (let page = 1; page <= 20; page += 1) {
     if (seenPages.has(page)) break;
     seenPages.add(page);
     params.set("page", String(page));
-    const response = await client.request(`${sageReadOnlyPaths.contacts}?${params.toString()}`);
+    const response = await sageRequestWithTimeout(client, `${sageReadOnlyPaths.contacts}?${params.toString()}`, {}, 10_000);
     if (!response.ok) {
       throw new SageBusinessLookupError("Sage contacts could not be searched.");
     }
@@ -545,11 +577,71 @@ export async function searchSageContacts(client: SageApiClient, search: string):
     if (!pageItems) {
       throw new SageBusinessLookupError("Sage contacts returned an unexpected response structure.");
     }
+    console.info("Sage contact lookup diagnostic", {
+      endpoint: sageReadOnlyPaths.contacts,
+      status: response.status,
+      page,
+      returnedContacts: pageItems.length,
+      searchMode: search.trim() ? "named" : "all_customers",
+    });
     items.push(...pageItems);
     const next = data.$next ?? data.next;
-    if (!next || pageItems.length < 200 || search.trim()) break;
+    if (!next || pageItems.length < 50 || search.trim()) break;
   }
   return { $items: items };
+}
+
+export function buildSagePlaceholderCustomerPayload(customerName: string): SagePlaceholderCustomerPayload {
+  const name = customerName.trim();
+  if (!name) {
+    throw new SageContactRequestError(400, "A customer name is required.");
+  }
+
+  return {
+    contact: {
+      name,
+      contact_type_ids: ["CUSTOMER"],
+      notes: "Created by Sage Import Checker. Placeholder address details must be completed in Sage before the invoice is sent.",
+      main_address: {
+        name: "TEST",
+        address_line_1: "TEST",
+        address_line_2: "TEST",
+        city: "TEST",
+        region: "TEST",
+        postal_code: "TEST",
+        is_main_address: true,
+      },
+      main_contact_person: {
+        name,
+        contact_person_type_ids: ["ACCOUNTS"],
+        is_main_contact: true,
+      },
+    },
+  };
+}
+
+export async function createSagePlaceholderCustomer(client: SageApiClient, customerName: string): Promise<SageCreatedContact> {
+  const response = await sageRequestWithTimeout(client, sageContactPaths.contacts, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildSagePlaceholderCustomerPayload(customerName)),
+  }, 15_000);
+
+  if (!response.ok) {
+    throw new SageContactRequestError(response.status);
+  }
+
+  const data = await response.json();
+  if (!isRecord(data)) {
+    throw new SageContactRequestError(502, "Sage created the customer but returned an unexpected response.");
+  }
+  const id = stringValue(data, "id");
+  const displayName = stringValue(data, "displayed_as") || stringValue(data, "name") || customerName.trim();
+  if (!id) {
+    throw new SageContactRequestError(502, "Sage did not return the new customer ID.");
+  }
+
+  return { id, displayName };
 }
 
 export async function searchSageSalesInvoices(client: SageApiClient, search: string): Promise<unknown> {
@@ -590,6 +682,13 @@ export class SageDraftInvoiceRequestError extends Error {
   constructor(public readonly status: number) {
     super("Sage rejected the draft invoice.");
     this.name = "SageDraftInvoiceRequestError";
+  }
+}
+
+export class SageContactRequestError extends Error {
+  constructor(public readonly status: number, message = "Sage could not create the customer.") {
+    super(message);
+    this.name = "SageContactRequestError";
   }
 }
 
@@ -665,6 +764,21 @@ function formBody(values: Record<string, string>): URLSearchParams {
 
 function invokeFetch(fetcher: typeof fetch, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return fetcher.call(globalThis, input, init);
+}
+
+async function sageRequestWithTimeout(client: SageApiClient, path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await client.request(path, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new SageBusinessLookupError("Sage took too long to respond.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function extractSageItems(data: unknown, resourceName: string): Record<string, unknown>[] {

@@ -20,9 +20,11 @@ import {
   fetchSageTaxRates,
   normalizeSageLedgerAccount,
   normalizeSageTaxRate,
+  createSagePlaceholderCustomer,
   createSageDraftInvoice,
   searchSageSalesInvoices,
   SageDraftInvoiceRequestError,
+  SageContactRequestError,
   SageUncertainResultError,
   searchSageContacts,
   safeStatusFromConnection,
@@ -56,7 +58,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-18";
+const APP_ASSET_VERSION = "20260726-19";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -142,6 +144,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/sage/contacts/search" && request.method === "POST") {
         return handleSageContactSearch(request, env);
+      }
+
+      if (url.pathname === "/api/sage/contacts/create-placeholder" && request.method === "POST") {
+        return handleSagePlaceholderContactCreate(request, env);
       }
 
       if (url.pathname === "/api/sage/customer-mappings" && request.method === "POST") {
@@ -573,15 +579,11 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
   }
 
   try {
-    const [exactData, normalizedData, savedMappings] = await Promise.all([
+    const [contactData, savedMappings] = await Promise.all([
       searchSageContacts(client.value, isUnnamedCustomerSelection ? "" : customerName || normalizedCustomerName),
-      !isUnnamedCustomerSelection && normalizedCustomerName && normalizedCustomerName !== customerName ? searchSageContacts(client.value, normalizedCustomerName) : Promise.resolve({ $items: [] }),
       database.value.listCustomerMappings((await activeSageBusinessId(env)) ?? ""),
     ]);
-    const matchesById = new Map([
-      ...parseSageContactItems(exactData),
-      ...parseSageContactItems(normalizedData),
-    ].map((match) => [match.sage_contact_id, match]));
+    const matchesById = new Map(parseSageContactItems(contactData).map((match) => [match.sage_contact_id, match]));
     const matches = [...matchesById.values()];
     const normalized = normalizedCustomerName || normalizeForClient(customerName);
     console.log("Sage contact search completed", {
@@ -643,6 +645,88 @@ async function handleSageCustomerMappingSave(request: Request, env: Env): Promis
   });
 
   return jsonResponse({ ok: true });
+}
+
+async function handleSagePlaceholderContactCreate(request: Request, env: Env): Promise<Response> {
+  const database = databaseFromEnv(env);
+  if (!database.ok) {
+    return jsonResponse(database.body, database.status);
+  }
+  const client = sageClientFromEnv(env);
+  if (!client.ok) {
+    return jsonResponse(client.body, client.status);
+  }
+
+  const body = await request.json() as {
+    customer_name?: string;
+    normalized_customer_name?: string;
+    confirmed?: boolean;
+  };
+  const customerName = String(body.customer_name ?? "").trim();
+  const normalizedCustomerName = String(body.normalized_customer_name ?? "").trim();
+  if (!customerName || !normalizedCustomerName || normalizedCustomerName === unnamedCustomerMappingKey) {
+    return jsonResponse({ ok: false, error: "A named customer from the monthly report is required." }, 400);
+  }
+  if (body.confirmed !== true) {
+    return jsonResponse({ ok: false, error: "Confirm the placeholder customer before creating it in Sage." }, 400);
+  }
+
+  const businessId = await activeSageBusinessId(env);
+  if (!businessId) {
+    return jsonResponse({ ok: false, error: "Connect Sage before creating a customer." }, 401);
+  }
+  const existingMapping = (await database.value.listCustomerMappings(businessId)).find((mapping) =>
+    mapping.normalized_customer_name === normalizedCustomerName && mapping.manually_confirmed
+  );
+  if (existingMapping) {
+    return jsonResponse({
+      ok: true,
+      already_mapped: true,
+      sage_contact_id: existingMapping.sage_contact_id,
+      sage_contact_display_name: existingMapping.sage_contact_display_name,
+    });
+  }
+
+  try {
+    const created = await createSagePlaceholderCustomer(client.value, customerName);
+    await database.value.saveCustomerMapping({
+      sage_business_id: businessId,
+      normalized_customer_name: normalizedCustomerName,
+      customer_email: null,
+      postcode: "TEST",
+      sage_contact_id: created.id,
+      sage_contact_display_name: created.displayName,
+      manually_confirmed: true,
+    });
+    console.info("Sage placeholder customer created", {
+      businessId,
+      contactIdSuffix: created.id.slice(-6),
+      sourceCustomerKey: normalizedCustomerName,
+    });
+    return jsonResponse({
+      ok: true,
+      already_mapped: false,
+      sage_contact_id: created.id,
+      sage_contact_display_name: created.displayName,
+      needs_completion: true,
+    }, 201);
+  } catch (error) {
+    if (error instanceof SageAuthorizationError) {
+      return jsonResponse({ ok: false, error: "Reconnect Sage before creating a customer." }, 401);
+    }
+    if (error instanceof SageContactRequestError) {
+      const message = error.status === 403
+        ? "Sage did not allow this app to create customers. Check the connected user's Contacts permission."
+        : error.status === 429
+          ? "Sage is temporarily limiting requests. Wait a moment, then try again."
+          : error.status >= 500
+            ? "Sage is temporarily unavailable. No customer mapping was saved."
+            : "Sage rejected the placeholder customer. Check the customer in Sage before trying again.";
+      return jsonResponse({ ok: false, error: message }, error.status >= 500 ? 502 : error.status);
+    }
+    console.error("Sage placeholder customer creation failed", safeError(error));
+    return jsonResponse({ ok: false, error: "The placeholder customer could not be created in Sage." }, 502);
+  }
 }
 
 async function handleSageReadiness(request: Request, env: Env): Promise<Response> {
@@ -1455,7 +1539,7 @@ function uploadPage(): string {
             <a id="sageConnectLink" class="button-link" href="/api/sage/connect">Connect Sage</a>
             <button id="sageDisconnectButton" class="secondary-button" type="button" disabled>Disconnect Sage</button>
           </div>
-          <p class="sage-note">Read-only connection stage. This app will not create contacts, invoices or credit notes yet.</p>
+          <p class="sage-note">Sage actions remain review-led. Customers and draft invoices are created only after an explicit confirmation.</p>
         </section>
 
         <section class="upload-workflow" aria-labelledby="upload-title">
@@ -1743,6 +1827,7 @@ function uploadPage(): string {
             <article>
               <h3>Customer matching</h3>
               <p>Match customers from the uploaded files to existing Sage contacts. Suggested matches are never accepted automatically.</p>
+              <p class="mapping-helper">Search Sage first. If the customer is not there, you can create a customer using the PDF name and temporary TEST address details, then complete the record in Sage later.</p>
               <div id="customerMappingBody" class="mapping-list">
                 <p class="empty-state">No customers found in the reviewed rows yet.</p>
               </div>
@@ -2680,6 +2765,19 @@ table {
   padding: 0 12px;
 }
 
+.mapping-helper {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.placeholder-contact-button {
+  border-color: #b98422;
+  color: #72591f;
+  background: #fffbf2;
+}
+
 .draft-workspace {
   display: grid;
   gap: 16px;
@@ -3365,6 +3463,7 @@ taxMappingBody.addEventListener("input", filterReferenceOptions);
 customerMappingBody.addEventListener("click", async (event) => {
   const searchButton = event.target instanceof Element ? event.target.closest("[data-search-contact]") : null;
   const saveButton = event.target instanceof Element ? event.target.closest("[data-save-contact]") : null;
+  const createButton = event.target instanceof Element ? event.target.closest("[data-create-placeholder-contact]") : null;
 
   if (searchButton) {
     await searchContact(searchButton.dataset.searchContact || "");
@@ -3372,6 +3471,10 @@ customerMappingBody.addEventListener("click", async (event) => {
 
   if (saveButton) {
     await saveCustomerMapping(saveButton.dataset.saveContact || "");
+  }
+
+  if (createButton) {
+    await createPlaceholderContact(createButton.dataset.createPlaceholderContact || "");
   }
 });
 
@@ -3600,7 +3703,7 @@ function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
   updatePreviewToggle(rows.length);
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
-  const pdfRowCount = Number(result.summary?.pdf_rows || 0);
+  const pdfRowCount = Number(result.totals?.pdf_rows || result.pdf_rows?.length || 0);
   const pdfText = pdfSummaries.length > 0
     ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " checked; " + pdfRowCount + " invoice row" + plural(pdfRowCount) + " read from the monthly report."
     : "";
@@ -3715,12 +3818,14 @@ function renderReviewTable() {
 
   if (reviewRows.length === 0) {
     reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions ready for review yet.</td></tr>';
+    updateDraftEmptyGuidance();
     return;
   }
 
   const rows = reviewRows.filter(matchesActiveReviewFilter);
   if (rows.length === 0) {
     reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions match this filter.</td></tr>';
+    updateDraftEmptyGuidance();
     return;
   }
 
@@ -3743,6 +3848,38 @@ function renderReviewTable() {
       '<td><span class="badge ' + badgeClassForReadiness(row.sage_readiness) + '">' + escapeHtml(formatStatus(row.sage_readiness || "not_checked")) + "</span></td>" +
       "</tr>";
   }).join("");
+  updateDraftEmptyGuidance();
+}
+
+function updateDraftEmptyGuidance() {
+  if (activeDraftSourceInvoiceId || !draftInvoiceWorkspace.hidden) {
+    return;
+  }
+  if (reviewRows.length === 0) {
+    draftInvoiceEmpty.textContent = "Check the uploaded files and review at least one invoice before preparing a Sage draft.";
+    return;
+  }
+  const savedRows = reviewRows.filter((row) => row.source_invoice_id);
+  if (savedRows.length === 0) {
+    draftInvoiceEmpty.textContent = "Choose Include for the invoice rows you want, then save the reviewed batch.";
+    return;
+  }
+  if (savedRows.some((row) => row.sage_readiness === "ready_for_sage")) {
+    draftInvoiceEmpty.textContent = "One or more invoices are ready. Select Preview draft in the Action column of the review table.";
+    return;
+  }
+  const missingContacts = savedRows.filter((row) => row.sage_readiness === "missing_contact_mapping").length;
+  const missingTax = savedRows.filter((row) => row.sage_readiness === "missing_tax_mapping").length;
+  const missingLedger = savedRows.filter((row) => row.sage_readiness === "missing_ledger_mapping").length;
+  const blocked = savedRows.filter((row) => row.sage_readiness === "blocked_by_warning").length;
+  const reasons = [];
+  if (missingContacts) reasons.push(missingContacts + " need customer matching");
+  if (missingTax) reasons.push(missingTax + " need a VAT choice");
+  if (missingLedger) reasons.push(missingLedger + " need a category choice");
+  if (blocked) reasons.push(blocked + " remain blocked by review warnings");
+  draftInvoiceEmpty.textContent = reasons.length
+    ? "No saved invoice is Sage-ready yet: " + reasons.join(", ") + "."
+    : "No saved invoice is Sage-ready yet. Review the readiness column above.";
 }
 
 function renderReviewTotals() {
@@ -3858,6 +3995,7 @@ function renderCustomerMappings() {
       : customer.missing_contact_message
         ? '<small>' + escapeHtml(customer.missing_contact_message) + '</small>'
         : "";
+    const canCreatePlaceholder = customer.normalized !== "__unnamed_customer__" && !saved;
 
     return '<div class="mapping-row">' +
       '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small>' + savedBadge(saved) + matchText + '</div>' +
@@ -3865,6 +4003,7 @@ function renderCustomerMappings() {
       '<div class="contact-actions">' +
         '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Refresh and search</button>' +
         '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' +
+        (canCreatePlaceholder ? '<button class="secondary-button placeholder-contact-button" type="button" data-create-placeholder-contact="' + escapeHtml(customer.normalized) + '">Create with TEST details</button>' : '') +
       '</div>' +
       '</div>';
   }).join("");
@@ -3969,10 +4108,13 @@ async function searchContact(normalizedCustomerName) {
     button.disabled = true;
     button.textContent = "Searching Sage...";
   }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12_000);
   try {
     const response = await fetch("/api/sage/contacts/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         customer_name: normalizedCustomerName === "__unnamed_customer__" ? "" : customer.name,
         normalized_customer_name: customer.normalized,
@@ -3993,8 +4135,69 @@ async function searchContact(normalizedCustomerName) {
     renderMappingNotice(result.match_status === "none" ? "error" : "success", result.missing_contact_message || "Contact search complete. Confirm the correct match manually.");
     renderCustomerMappings();
   } catch (error) {
-    renderMappingNotice("error", "Sage contacts could not be searched. Try reconnecting Sage if this continues.");
+    renderMappingNotice("error", error.name === "AbortError"
+      ? "Sage contact search took too long. You can try again or create a customer with temporary TEST details."
+      : "Sage contacts could not be searched. Try reconnecting Sage if this continues.");
     console.error(error);
+  } finally {
+    window.clearTimeout(timeout);
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = "Refresh and search";
+    }
+  }
+}
+
+async function createPlaceholderContact(normalizedCustomerName) {
+  const customer = uniqueCustomers().find((item) => item.normalized === normalizedCustomerName);
+  if (!customer) {
+    return;
+  }
+  const confirmed = window.confirm(
+    'Create "' + customer.name + '" as a Sage customer with TEST placeholder address details? You must complete the customer record in Sage before sending an invoice.'
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const button = customerMappingBody.querySelector('[data-create-placeholder-contact="' + cssEscape(normalizedCustomerName) + '"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating customer...";
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch("/api/sage/contacts/create-placeholder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        customer_name: customer.name,
+        normalized_customer_name: customer.normalized,
+        confirmed: true,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      renderMappingNotice("error", result.error || "The customer could not be created in Sage.");
+      return;
+    }
+    renderMappingNotice("success", result.already_mapped
+      ? customer.name + " is already linked to " + result.sage_contact_display_name + "."
+      : customer.name + " was created and linked in Sage. Complete the TEST address details in Sage before sending the invoice.");
+    await loadSageReferences();
+  } catch (error) {
+    renderMappingNotice("error", error.name === "AbortError"
+      ? "Sage took too long to confirm the customer. Check Sage before trying again so a duplicate is not created."
+      : "The customer could not be created in Sage. No mapping was saved.");
+    console.error(error);
+  } finally {
+    window.clearTimeout(timeout);
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = "Create with TEST details";
+    }
   }
 }
 

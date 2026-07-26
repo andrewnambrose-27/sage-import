@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SageApiClient,
   SageAuthorizationError,
+  buildSagePlaceholderCustomerPayload,
   SageReferenceFetchError,
   SageResponseShapeError,
   SageTokenExchangeError,
@@ -229,6 +230,36 @@ describe("safe status", () => {
 describe("Sage business request header", () => {
   it("formats compact UUID business IDs for the Sage request header", () => {
     expect(formatSageBusinessHeader("da248186f30e4dc2a34fb73dcdc03a44")).toBe("da248186-f30e-4dc2-a34f-b73dcdc03a44");
+  });
+});
+
+describe("placeholder Sage customers", () => {
+  it("uses the PDF customer name and clearly marked temporary address details", () => {
+    expect(buildSagePlaceholderCustomerPayload("  Charlotte Walker  ")).toEqual({
+      contact: {
+        name: "Charlotte Walker",
+        contact_type_ids: ["CUSTOMER"],
+        notes: "Created by Sage Import Checker. Placeholder address details must be completed in Sage before the invoice is sent.",
+        main_address: {
+          name: "TEST",
+          address_line_1: "TEST",
+          address_line_2: "TEST",
+          city: "TEST",
+          region: "TEST",
+          postal_code: "TEST",
+          is_main_address: true,
+        },
+        main_contact_person: {
+          name: "Charlotte Walker",
+          contact_person_type_ids: ["ACCOUNTS"],
+          is_main_contact: true,
+        },
+      },
+    });
+  });
+
+  it("rejects a blank customer name", () => {
+    expect(() => buildSagePlaceholderCustomerPayload("   ")).toThrow("A customer name is required.");
   });
 });
 
