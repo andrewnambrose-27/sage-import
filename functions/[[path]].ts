@@ -51,7 +51,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-3";
+const APP_ASSET_VERSION = "20260726-4";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1996,6 +1996,12 @@ h2 {
   background: #e4f4ef;
 }
 
+.file-card.has-file {
+  border-color: #268168;
+  background: #f4fbf8;
+  box-shadow: 0 0 0 2px rgba(38, 129, 104, 0.16), 0 6px 16px rgba(23, 111, 88, 0.1);
+}
+
 .file-card h3 {
   margin: 0 0 8px;
   font-size: 1rem;
@@ -2919,6 +2925,7 @@ clearButton.addEventListener("click", () => {
   uploadForm.reset();
   for (const slot of uploadSlots) {
     setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
+    document.querySelector('[data-slot="' + slot.id + '"]').classList.remove("has-file");
     document.querySelector('[data-remove-file="' + slot.id + '"]').hidden = true;
   }
   summaryNotice.className = "notice";
@@ -2934,6 +2941,7 @@ clearButton.addEventListener("click", () => {
 
 function updateFieldMessage(slot) {
   const files = getFiles(slot);
+  document.querySelector('[data-slot="' + slot.id + '"]').classList.toggle("has-file", files.length > 0);
   document.querySelector('[data-remove-file="' + slot.id + '"]').hidden = files.length === 0;
   clearButton.disabled = !uploadSlots.some((item) => getFiles(item).length > 0);
   if (files.length === 0) {
