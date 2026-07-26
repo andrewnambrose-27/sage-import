@@ -572,8 +572,15 @@ export async function searchSageContacts(client: SageApiClient, search: string):
     if (!response.ok) {
       throw new SageBusinessLookupError("Sage contacts could not be searched.");
     }
-    const data = await response.json() as Record<string, unknown>;
-    const pageItems = Array.isArray(data.$items) ? data.$items : Array.isArray(data.items) ? data.items : null;
+    const data = await response.json() as unknown;
+    const dataRecord = isRecord(data) ? data : null;
+    const pageItems = Array.isArray(data)
+      ? data
+      : Array.isArray(dataRecord?.$items)
+        ? dataRecord.$items
+        : Array.isArray(dataRecord?.items)
+          ? dataRecord.items
+          : null;
     if (!pageItems) {
       throw new SageBusinessLookupError("Sage contacts returned an unexpected response structure.");
     }
@@ -585,7 +592,7 @@ export async function searchSageContacts(client: SageApiClient, search: string):
       searchMode: search.trim() ? "named" : "all_customers",
     });
     items.push(...pageItems);
-    const next = data.$next ?? data.next;
+    const next = dataRecord?.$next ?? dataRecord?.next;
     if (!next || pageItems.length < 50 || search.trim()) break;
   }
   return { $items: items };

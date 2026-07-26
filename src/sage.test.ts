@@ -13,6 +13,7 @@ import {
   formatSageBusinessHeader,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
+  searchSageContacts,
   safeStatusFromConnection,
   validateOAuthCallbackInput,
   type SageConnectionConfig,
@@ -260,6 +261,21 @@ describe("placeholder Sage customers", () => {
 
   it("rejects a blank customer name", () => {
     expect(() => buildSagePlaceholderCustomerPayload("   ")).toThrow("A customer name is required.");
+  });
+});
+
+describe("Sage contact search", () => {
+  it("accepts the direct-array response returned by Sage contacts", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => jsonResponse([
+      { id: "contact-1", displayed_as: "Charlotte Walker" },
+    ])) as unknown as typeof fetch;
+
+    await expect(searchSageContacts(new SageApiClient(store, config, fetcher), "Charlotte Walker")).resolves.toEqual({
+      $items: [{ id: "contact-1", displayed_as: "Charlotte Walker" }],
+    });
+    expect(String(vi.mocked(fetcher).mock.calls[0][0])).toContain("contact_type_id=CUSTOMER");
   });
 });
 

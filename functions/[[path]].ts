@@ -58,7 +58,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-19";
+const APP_ASSET_VERSION = "20260726-20";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1384,6 +1384,7 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
       ...securityHeaders,
       ...headers,
     },
@@ -1825,8 +1826,13 @@ function uploadPage(): string {
               </div>
             </article>
             <article>
-              <h3>Customer matching</h3>
-              <p>Match customers from the uploaded files to existing Sage contacts. Suggested matches are never accepted automatically.</p>
+              <div class="customer-matching-heading">
+                <div>
+                  <h3>Customer matching</h3>
+                  <p>Match customers from the uploaded files to existing Sage contacts. Suggested matches are never accepted automatically.</p>
+                </div>
+                <button id="addMissingContactsButton" class="secondary-button" type="button" disabled>Add all missing contacts</button>
+              </div>
               <p class="mapping-helper">Search Sage first. If the customer is not there, you can create a customer using the PDF name and temporary TEST address details, then complete the record in Sage later.</p>
               <div id="customerMappingBody" class="mapping-list">
                 <p class="empty-state">No customers found in the reviewed rows yet.</p>
@@ -2772,6 +2778,34 @@ table {
   line-height: 1.5;
 }
 
+.customer-matching-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.customer-matching-heading h3,
+.customer-matching-heading p {
+  margin-right: 0;
+}
+
+.customer-matching-heading button {
+  flex: 0 0 auto;
+}
+
+.contact-saved-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #8fc6ba;
+  border-radius: 8px;
+  background: #e7f4f0;
+  color: #0b5d51;
+  font-weight: 800;
+}
+
 .placeholder-contact-button {
   border-color: #b98422;
   color: #72591f;
@@ -2998,6 +3032,11 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 
+  .customer-matching-heading {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .draft-preview-grid {
     grid-template-columns: 1fr;
   }
@@ -3052,6 +3091,7 @@ const conversionSetupSummary = document.querySelector("#conversionSetupSummary")
 const taxMappingBody = document.querySelector("#taxMappingBody");
 const ledgerMappingBody = document.querySelector("#ledgerMappingBody");
 const customerMappingBody = document.querySelector("#customerMappingBody");
+const addMissingContactsButton = document.querySelector("#addMissingContactsButton");
 const draftInvoiceNotice = document.querySelector("#draftInvoiceNotice");
 const draftInvoiceEmpty = document.querySelector("#draftInvoiceEmpty");
 const draftInvoiceWorkspace = document.querySelector("#draftInvoiceWorkspace");
@@ -3477,6 +3517,8 @@ customerMappingBody.addEventListener("click", async (event) => {
     await createPlaceholderContact(createButton.dataset.createPlaceholderContact || "");
   }
 });
+
+addMissingContactsButton.addEventListener("click", createAllMissingContacts);
 
 checkButton.addEventListener("click", async () => {
   checkButton.disabled = true;
@@ -3978,17 +4020,34 @@ function renderCustomerMappings() {
 
   if (customers.length === 0) {
     customerMappingBody.innerHTML = '<p class="empty-state">No customer matches are needed for the currently reviewed rows.<br><small>Customers will appear here after invoice rows have been reviewed and approved.</small></p>';
+    addMissingContactsButton.disabled = true;
     return;
   }
 
+  const missingNamedCustomers = customers.filter((customer) =>
+    customer.normalized !== "__unnamed_customer__" &&
+    !sageReferences.customer_mappings.some((mapping) => mapping.normalized_customer_name === customer.normalized && mapping.manually_confirmed)
+  );
+  addMissingContactsButton.disabled = missingNamedCustomers.length === 0;
+  addMissingContactsButton.textContent = missingNamedCustomers.length > 0
+    ? "Add all missing contacts (" + missingNamedCustomers.length + ")"
+    : "All contacts saved";
+
   customerMappingBody.innerHTML = customers.map((customer) => {
     const saved = sageReferences.customer_mappings.find((mapping) => mapping.normalized_customer_name === customer.normalized);
-    const contactOptions = (customer.matches || []).map((match) =>
+    const matches = [...(customer.matches || [])];
+    if (saved && !matches.some((match) => match.sage_contact_id === saved.sage_contact_id)) {
+      matches.unshift({
+        sage_contact_id: saved.sage_contact_id,
+        sage_contact_display_name: saved.sage_contact_display_name,
+      });
+    }
+    const contactOptions = matches.map((match) =>
       '<option value="' + escapeHtml(match.sage_contact_id) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
     ).join("");
-    const hasMatches = Array.isArray(customer.matches) && customer.matches.length > 0;
+    const hasMatches = matches.length > 0;
     const select = hasMatches
-      ? '<select id="contact-' + slug(customer.normalized) + '">' + contactOptions + '</select>'
+      ? '<select id="contact-' + slug(customer.normalized) + '"' + (saved ? " disabled" : "") + '>' + contactOptions + '</select>'
       : '<select id="contact-' + slug(customer.normalized) + '" disabled><option>Search Sage first</option></select>';
     const matchText = customer.match_status === "ambiguous"
       ? '<small>Multiple possible matches. Please choose manually.</small>'
@@ -3996,13 +4055,17 @@ function renderCustomerMappings() {
         ? '<small>' + escapeHtml(customer.missing_contact_message) + '</small>'
         : "";
     const canCreatePlaceholder = customer.normalized !== "__unnamed_customer__" && !saved;
+    const savedStatus = saved
+      ? '<span class="contact-saved-status">' + (saved.postcode === "TEST" ? "Contact added in Sage" : "Available in Sage and saved") + '</span>'
+      : '';
 
     return '<div class="mapping-row">' +
-      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small>' + savedBadge(saved) + matchText + '</div>' +
+      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small>' + (saved ? '<small>Saved contact: ' + escapeHtml(saved.sage_contact_display_name) + '</small>' : '<small>Not mapped yet</small>') + matchText + '</div>' +
       select +
       '<div class="contact-actions">' +
-        '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Refresh and search</button>' +
-        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' +
+        savedStatus +
+        (!saved ? '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Refresh and search</button>' : '') +
+        (!saved ? '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' : '') +
         (canCreatePlaceholder ? '<button class="secondary-button placeholder-contact-button" type="button" data-create-placeholder-contact="' + escapeHtml(customer.normalized) + '">Create with TEST details</button>' : '') +
       '</div>' +
       '</div>';
@@ -4011,7 +4074,7 @@ function renderCustomerMappings() {
 
 async function loadSageReferences() {
   try {
-    const response = await fetch("/api/sage/references");
+    const response = await fetch("/api/sage/references", { cache: "no-store" });
     const data = await response.json();
     if (!response.ok) {
       sageReferences = emptySageReferences();
@@ -4148,16 +4211,16 @@ async function searchContact(normalizedCustomerName) {
   }
 }
 
-async function createPlaceholderContact(normalizedCustomerName) {
+async function createPlaceholderContact(normalizedCustomerName, options = {}) {
   const customer = uniqueCustomers().find((item) => item.normalized === normalizedCustomerName);
   if (!customer) {
-    return;
+    return false;
   }
-  const confirmed = window.confirm(
+  const confirmed = options.skipConfirmation || window.confirm(
     'Create "' + customer.name + '" as a Sage customer with TEST placeholder address details? You must complete the customer record in Sage before sending an invoice.'
   );
   if (!confirmed) {
-    return;
+    return false;
   }
 
   const button = customerMappingBody.querySelector('[data-create-placeholder-contact="' + cssEscape(normalizedCustomerName) + '"]');
@@ -4181,23 +4244,67 @@ async function createPlaceholderContact(normalizedCustomerName) {
     const result = await response.json();
     if (!response.ok || !result.ok) {
       renderMappingNotice("error", result.error || "The customer could not be created in Sage.");
-      return;
+      return false;
     }
-    renderMappingNotice("success", result.already_mapped
-      ? customer.name + " is already linked to " + result.sage_contact_display_name + "."
-      : customer.name + " was created and linked in Sage. Complete the TEST address details in Sage before sending the invoice.");
-    await loadSageReferences();
+    if (!options.quiet) {
+      renderMappingNotice("success", result.already_mapped
+        ? customer.name + " is already linked to " + result.sage_contact_display_name + "."
+        : "Contact added: " + customer.name + ". Complete the TEST address details in Sage before sending the invoice.");
+    }
+    if (!options.deferRefresh) {
+      await loadSageReferences();
+    }
+    return true;
   } catch (error) {
     renderMappingNotice("error", error.name === "AbortError"
       ? "Sage took too long to confirm the customer. Check Sage before trying again so a duplicate is not created."
       : "The customer could not be created in Sage. No mapping was saved.");
     console.error(error);
+    return false;
   } finally {
     window.clearTimeout(timeout);
     if (button && button.isConnected) {
       button.disabled = false;
       button.textContent = "Create with TEST details";
     }
+  }
+}
+
+async function createAllMissingContacts() {
+  const missingCustomers = uniqueCustomers().filter((customer) =>
+    customer.normalized !== "__unnamed_customer__" &&
+    !sageReferences.customer_mappings.some((mapping) => mapping.normalized_customer_name === customer.normalized && mapping.manually_confirmed)
+  );
+  if (missingCustomers.length === 0) {
+    renderMappingNotice("success", "All customer contacts are already saved.");
+    return;
+  }
+  if (!window.confirm(
+    "Create " + missingCustomers.length + " missing Sage customer contacts using their PDF names and temporary TEST address details? Each customer must be completed in Sage before an invoice is sent."
+  )) {
+    return;
+  }
+
+  addMissingContactsButton.disabled = true;
+  let added = 0;
+  for (const customer of missingCustomers) {
+    addMissingContactsButton.textContent = "Adding contact " + (added + 1) + " of " + missingCustomers.length + "...";
+    const created = await createPlaceholderContact(customer.normalized, {
+      skipConfirmation: true,
+      deferRefresh: true,
+      quiet: true,
+    });
+    if (!created) {
+      break;
+    }
+    added += 1;
+  }
+
+  await loadSageReferences();
+  if (added === missingCustomers.length) {
+    renderMappingNotice("success", added + " contact" + plural(added) + " added and saved. Complete their TEST details in Sage before sending invoices.");
+  } else {
+    renderMappingNotice("error", added + " contact" + plural(added) + " added before the process stopped. Running this action again will skip contacts already saved.");
   }
 }
 
