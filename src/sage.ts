@@ -530,11 +530,26 @@ export async function searchSageContacts(client: SageApiClient, search: string):
   const params = new URLSearchParams();
   if (search.trim()) params.set("search", search);
   params.set("items_per_page", "200");
-  const response = await client.request(`${sageReadOnlyPaths.contacts}?${params.toString()}`);
-  if (!response.ok) {
-    throw new SageBusinessLookupError("Sage contacts could not be searched.");
+  const items: unknown[] = [];
+  const seenPages = new Set<number>();
+  for (let page = 1; page <= 20; page += 1) {
+    if (seenPages.has(page)) break;
+    seenPages.add(page);
+    params.set("page", String(page));
+    const response = await client.request(`${sageReadOnlyPaths.contacts}?${params.toString()}`);
+    if (!response.ok) {
+      throw new SageBusinessLookupError("Sage contacts could not be searched.");
+    }
+    const data = await response.json() as Record<string, unknown>;
+    const pageItems = Array.isArray(data.$items) ? data.$items : Array.isArray(data.items) ? data.items : null;
+    if (!pageItems) {
+      throw new SageBusinessLookupError("Sage contacts returned an unexpected response structure.");
+    }
+    items.push(...pageItems);
+    const next = data.$next ?? data.next;
+    if (!next || pageItems.length === 0 || search.trim()) break;
   }
-  return response.json();
+  return { $items: items };
 }
 
 export async function searchSageSalesInvoices(client: SageApiClient, search: string): Promise<unknown> {
