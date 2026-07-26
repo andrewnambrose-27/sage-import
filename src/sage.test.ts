@@ -9,6 +9,7 @@ import {
   encryptTokenPair,
   exchangeAuthorizationCode,
   expiryFromNow,
+  formatSageBusinessHeader,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
   safeStatusFromConnection,
@@ -211,6 +212,12 @@ describe("safe status", () => {
       last_refreshed_at: null,
       reauthorization_required: false,
     });
+  });
+});
+
+describe("Sage business request header", () => {
+  it("formats compact UUID business IDs for the Sage request header", () => {
+    expect(formatSageBusinessHeader("da248186f30e4dc2a34fb73dcdc03a44")).toBe("da248186-f30e-4dc2-a34f-b73dcdc03a44");
   });
 });
 

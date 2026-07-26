@@ -439,7 +439,7 @@ export class SageApiClient {
     const { accessToken } = await decryptTokenPair(current, this.config.tokenEncryptionKey);
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${accessToken}`);
-    headers.set("X-Business", current.sage_business_id);
+    headers.set("X-Business", formatSageBusinessHeader(current.sage_business_id));
     headers.set("Accept", "application/json");
 
     return {
@@ -579,6 +579,14 @@ export class SageDraftInvoiceRequestError extends Error {
 
 export function expiryFromNow(expiresInSeconds: number): string {
   return new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+}
+
+export function formatSageBusinessHeader(value: string): string {
+  const compact = value.replace(/-/g, "");
+  if (/^[0-9a-f]{32}$/i.test(compact)) {
+    return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+  }
+  return value;
 }
 
 function needsRefresh(expiresAt: string): boolean {
