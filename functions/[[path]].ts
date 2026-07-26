@@ -91,6 +91,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         });
       }
 
+      // Sage returns here from a third-party domain. The short-lived OAuth state
+      // cookie validates that return, so this must not depend on the app session.
+      if (url.pathname === "/api/sage/callback" && request.method === "GET") {
+        return handleSageCallback(request, env);
+      }
+
       if (!(await isAuthenticated(request, env))) {
         return redirect("/login");
       }
@@ -105,10 +111,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/sage/connect" && request.method === "GET") {
         return handleSageConnect(request, env);
-      }
-
-      if (url.pathname === "/api/sage/callback" && request.method === "GET") {
-        return handleSageCallback(request, env);
       }
 
       if (url.pathname === "/api/sage/disconnect" && request.method === "POST") {
