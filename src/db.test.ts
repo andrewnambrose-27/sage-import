@@ -6,6 +6,7 @@ import {
   hashSourceInvoice,
   moneyToMinorUnits,
   normalizeCustomerName,
+  parseCachedReferenceJson,
   type PersistableSourceInvoice,
 } from "./db";
 
@@ -69,6 +70,12 @@ describe("source invoice records", () => {
 describe("normalizeCustomerName", () => {
   it("normalizes spacing, case and simple punctuation", () => {
     expect(normalizeCustomerName("  NORAM  Firns, Ltd. ")).toBe("noram firns ltd");
+  });
+});
+
+describe("cached Sage reference JSON", () => {
+  it("handles malformed cached JSON without breaking reference loading", () => {
+    expect(parseCachedReferenceJson("{not-json")).toEqual({});
   });
 });
 

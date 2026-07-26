@@ -68,7 +68,7 @@ export interface ReadinessContext {
 }
 
 export function parseSageReferenceItems(data: unknown, referenceType: SageReferenceType): SageReferenceEntry[] {
-  return extractItems(data).map((item) => {
+  return extractItems(data, `Sage ${referenceType === "tax_rate" ? "tax rates" : "ledger accounts"}`).map((item) => {
     const id = stringValue(item, "id");
     const displayName = stringValue(item, "displayed_as") || stringValue(item, "display_name") || stringValue(item, "name");
     if (!id || !displayName) {
@@ -78,7 +78,7 @@ export function parseSageReferenceItems(data: unknown, referenceType: SageRefere
     return {
       reference_type: referenceType,
       sage_entity_id: id,
-      source_code: stringValue(item, "code") || stringValue(item, "ledger_account_code") || null,
+      source_code: stringValue(item, "code") || stringValue(item, "ledger_account_code") || stringValue(item, "nominal_code") || null,
       sage_display_name: displayName,
       is_active: activeFromReference(item),
       raw: item,
@@ -87,7 +87,7 @@ export function parseSageReferenceItems(data: unknown, referenceType: SageRefere
 }
 
 export function parseSageContactItems(data: unknown): SageContactMatch[] {
-  return extractItems(data).map((item) => {
+  return extractItems(data, "Sage contacts").map((item) => {
     const id = stringValue(item, "id");
     const displayName = stringValue(item, "displayed_as") || stringValue(item, "name");
     if (!id || !displayName) {
@@ -210,13 +210,27 @@ function postcodeFromContact(item: Record<string, unknown>): string | null {
   return stringValue(mainAddress, "postal_code") || stringValue(mainAddress, "postcode") || null;
 }
 
-function extractItems(data: unknown): Record<string, unknown>[] {
+function extractItems(data: unknown, resourceName: string): Record<string, unknown>[] {
+  if (Array.isArray(data)) {
+    return data.filter(isRecord);
+  }
   if (!isRecord(data)) {
-    return [];
+    throw new Error(`${resourceName} returned an unexpected response structure.`);
   }
 
-  const value = data.$items ?? data.items;
-  return Array.isArray(value) ? value.filter(isRecord) : [];
+  const direct = data.$items ?? data.items;
+  if (Array.isArray(direct)) {
+    return direct.filter(isRecord);
+  }
+
+  if (isRecord(data.data)) {
+    const nested = data.data.$items ?? data.data.items;
+    if (Array.isArray(nested)) {
+      return nested.filter(isRecord);
+    }
+  }
+
+  throw new Error(`${resourceName} returned an unexpected response structure.`);
 }
 
 function stringValue(value: unknown, key: string): string {

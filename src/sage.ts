@@ -114,6 +114,62 @@ export class SageBusinessLookupError extends Error {
   }
 }
 
+export class SageReferenceFetchError extends Error {
+  constructor(
+    public readonly endpoint: string,
+    public readonly status: number,
+    message = "Sage reference data could not be read.",
+  ) {
+    super(message);
+    this.name = "SageReferenceFetchError";
+  }
+}
+
+export class SageResponseShapeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SageResponseShapeError";
+  }
+}
+
+export interface SageReferenceDiagnostics {
+  businessId: string;
+  endpoint: string;
+  status: number;
+  contentType: string | null;
+  topLevelKeys: string[];
+  itemCount: number;
+  page: number;
+  totalPages: number | null;
+  totalItems: number | null;
+}
+
+export interface SageReferenceFetchResult {
+  items: Record<string, unknown>[];
+  diagnostics: SageReferenceDiagnostics[];
+}
+
+export interface SageTaxRateReference {
+  id: string;
+  name: string;
+  displayName: string;
+  percentage: number | null;
+  active: boolean;
+  usableForSales: boolean | null;
+}
+
+export interface SageLedgerAccountReference {
+  id: string;
+  code: string;
+  name: string;
+  displayName: string;
+  accountType: string | null;
+  accountGroup: string | null;
+  visible: boolean | null;
+  active: boolean | null;
+  defaultTaxRateId: string | null;
+}
+
 export function createSageAuthorizationUrl(config: Pick<SageConnectionConfig, "clientId" | "redirectUri">, state: string): string {
   const url = new URL(sageOAuthEndpoints.authorizationUrl);
   url.searchParams.set("response_type", "code");
@@ -176,7 +232,7 @@ export async function fetchConnectedBusiness(accessToken: string, fetcher: typeo
   }
 
   const data = await response.json() as unknown;
-  const items = extractItems(data);
+  const items = extractSageItems(data, "Sage businesses");
   const business = items[0];
   const id = stringValue(business, "id");
   const displayName = stringValue(business, "displayed_as") || stringValue(business, "name");
@@ -363,6 +419,14 @@ export class SageApiClient {
     }
   }
 
+  async activeBusinessId(): Promise<string> {
+    const connection = await this.store.getActiveConnection();
+    if (!connection) {
+      throw new SageAuthorizationError("Sage is not connected.");
+    }
+    return connection.sage_business_id;
+  }
+
   private async requestWithCurrentToken(path: string, init: RequestInit): Promise<{ response: Response; connection: SageConnectionRecord }> {
     const connection = await this.store.getActiveConnection();
     if (!connection) {
@@ -425,20 +489,39 @@ export class SageApiClient {
   }
 }
 
-export async function fetchSageLedgerAccounts(client: SageApiClient): Promise<unknown> {
-  const response = await client.request(sageReadOnlyPaths.ledgerAccounts);
-  if (!response.ok) {
-    throw new SageBusinessLookupError("Sage ledger accounts could not be read.");
-  }
-  return response.json();
+export async function fetchSageLedgerAccounts(client: SageApiClient): Promise<SageReferenceFetchResult> {
+  return fetchSageReferenceCollection(client, sageReadOnlyPaths.ledgerAccounts, "Sage ledger accounts");
 }
 
-export async function fetchSageTaxRates(client: SageApiClient): Promise<unknown> {
-  const response = await client.request(sageReadOnlyPaths.taxRates);
-  if (!response.ok) {
-    throw new SageBusinessLookupError("Sage tax rates could not be read.");
-  }
-  return response.json();
+export async function fetchSageTaxRates(client: SageApiClient): Promise<SageReferenceFetchResult> {
+  return fetchSageReferenceCollection(client, sageReadOnlyPaths.taxRates, "Sage tax rates");
+}
+
+export function normalizeSageTaxRate(item: Record<string, unknown>): SageTaxRateReference {
+  const name = stringValue(item, "name") || stringValue(item, "displayed_as") || stringValue(item, "display_name");
+  return {
+    id: stringValue(item, "id"),
+    name,
+    displayName: stringValue(item, "displayed_as") || stringValue(item, "display_name") || name,
+    percentage: firstNumber(item, ["percentage", "rate", "tax_rate_percentage"]),
+    active: activeValue(item) ?? true,
+    usableForSales: booleanValue(item, ["usable_for_sales", "sales_usable", "is_sales"]),
+  };
+}
+
+export function normalizeSageLedgerAccount(item: Record<string, unknown>): SageLedgerAccountReference {
+  const name = stringValue(item, "name") || stringValue(item, "displayed_as") || stringValue(item, "display_name");
+  return {
+    id: stringValue(item, "id"),
+    code: stringValue(item, "nominal_code") || stringValue(item, "ledger_account_code") || stringValue(item, "code"),
+    name,
+    displayName: stringValue(item, "displayed_as") || stringValue(item, "display_name") || name,
+    accountType: stringValue(item, "ledger_account_type") || stringValue(item, "account_type") || null,
+    accountGroup: stringValue(item, "ledger_account_group") || stringValue(item, "account_group") || null,
+    visible: booleanValue(item, ["visible", "is_visible"]),
+    active: activeValue(item),
+    defaultTaxRateId: stringValue(item, "tax_rate_id") || stringValue(item, "default_tax_rate_id") || null,
+  };
 }
 
 export async function searchSageContacts(client: SageApiClient, search: string): Promise<unknown> {
@@ -554,13 +637,178 @@ function formBody(values: Record<string, string>): URLSearchParams {
   return body;
 }
 
-function extractItems(data: unknown): Record<string, unknown>[] {
-  if (!isRecord(data)) {
-    return [];
+export function extractSageItems(data: unknown, resourceName: string): Record<string, unknown>[] {
+  if (Array.isArray(data)) {
+    return data.filter(isRecord);
   }
 
-  const value = data.$items ?? data.items;
-  return Array.isArray(value) ? value.filter(isRecord) : [];
+  if (!isRecord(data)) {
+    throw new SageResponseShapeError(`${resourceName} returned an unexpected response structure.`);
+  }
+
+  const direct = data.$items ?? data.items;
+  if (Array.isArray(direct)) {
+    return direct.filter(isRecord);
+  }
+
+  if (isRecord(data.data)) {
+    const nested = data.data.$items ?? data.data.items;
+    if (Array.isArray(nested)) {
+      return nested.filter(isRecord);
+    }
+  }
+
+  throw new SageResponseShapeError(`${resourceName} returned an unexpected response structure.`);
+}
+
+async function fetchSageReferenceCollection(
+  client: SageApiClient,
+  path: string,
+  resourceName: string,
+): Promise<SageReferenceFetchResult> {
+  const perPage = 200;
+  const maxPages = 100;
+  const items: Record<string, unknown>[] = [];
+  const diagnostics: SageReferenceDiagnostics[] = [];
+  const businessId = await client.activeBusinessId();
+  const seenPages = new Set<number>();
+  let page = 1;
+  let totalPages: number | null = null;
+
+  while (page <= maxPages) {
+    if (seenPages.has(page)) {
+      throw new SageResponseShapeError(`${resourceName} pagination repeated a page.`);
+    }
+    seenPages.add(page);
+
+    const requestPath = withPagination(path, page, perPage);
+    const response = await client.request(requestPath);
+    const contentType = response.headers.get("content-type");
+    if (!response.ok) {
+      logSageReferenceDiagnostic({
+        businessId,
+        endpoint: path,
+        status: response.status,
+        contentType,
+        topLevelKeys: [],
+        itemCount: 0,
+        page,
+        totalPages: null,
+        totalItems: null,
+      });
+      throw new SageReferenceFetchError(path, response.status, safeSageResponseMessage(response.status));
+    }
+
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new SageResponseShapeError(`${resourceName} returned a non-JSON response.`);
+    }
+    const pageItems = extractSageItems(data, resourceName);
+    const metadata = paginationMetadata(response, data);
+    totalPages = metadata.totalPages ?? totalPages;
+    const diagnostic: SageReferenceDiagnostics = {
+      businessId,
+      endpoint: path,
+      status: response.status,
+      contentType,
+      topLevelKeys: Array.isArray(data) ? ["array"] : isRecord(data) ? Object.keys(data).slice(0, 20) : [],
+      itemCount: pageItems.length,
+      page,
+      totalPages: metadata.totalPages,
+      totalItems: metadata.totalItems,
+    };
+    diagnostics.push(diagnostic);
+    logSageReferenceDiagnostic(diagnostic);
+    items.push(...pageItems);
+
+    if (metadata.totalPages !== null) {
+      if (page >= metadata.totalPages) {
+        break;
+      }
+      page += 1;
+      continue;
+    }
+
+    if (pageItems.length < perPage) {
+      break;
+    }
+    page += 1;
+  }
+
+  if (page > maxPages) {
+    throw new SageResponseShapeError(`${resourceName} pagination exceeded the safety limit.`);
+  }
+
+  return { items: dedupeSageItems(items), diagnostics };
+}
+
+function withPagination(path: string, page: number, itemsPerPage: number): string {
+  const url = new URL(path, "https://sage-import.invalid");
+  url.searchParams.set("items_per_page", String(itemsPerPage));
+  url.searchParams.set("page", String(page));
+  return `${url.pathname}${url.search}`;
+}
+
+function paginationMetadata(response: Response, data: unknown): { totalPages: number | null; totalItems: number | null } {
+  const headerNumber = (name: string): number | null => {
+    const value = Number(response.headers.get(name));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  };
+  const object = isRecord(data) ? data : {};
+  const nested = isRecord(object.pagination) ? object.pagination : {};
+  const numberValue = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    totalPages: headerNumber("x-pagination-totalpages") ?? headerNumber("x-pagination-total-pages") ?? numberValue(nested.total_pages) ?? numberValue(object.total_pages),
+    totalItems: headerNumber("x-pagination-totalitems") ?? headerNumber("x-pagination-total-items") ?? numberValue(nested.total_items) ?? numberValue(object.total_items),
+  };
+}
+
+function dedupeSageItems(items: Record<string, unknown>[]): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  return items.filter((item, index) => {
+    const id = stringValue(item, "id");
+    const key = id || `page-item-${index}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function safeSageResponseMessage(status: number): string {
+  if (status === 401) return "Sage authorization needs to be reconnected.";
+  if (status === 403) return "Sage denied access to this reference data.";
+  if (status === 429) return "Sage is temporarily rate limiting reference requests.";
+  return "Sage reference data could not be read.";
+}
+
+function logSageReferenceDiagnostic(diagnostic: SageReferenceDiagnostics): void {
+  console.info("Sage reference refresh diagnostic", diagnostic);
+}
+
+function firstNumber(item: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = typeof item[key] === "number" ? item[key] : Number(item[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function booleanValue(item: Record<string, unknown>, keys: string[]): boolean | null {
+  for (const key of keys) {
+    if (typeof item[key] === "boolean") return item[key];
+  }
+  return null;
+}
+
+function activeValue(item: Record<string, unknown>): boolean | null {
+  if (typeof item.active === "boolean") return item.active;
+  if (typeof item.is_active === "boolean") return item.is_active;
+  if (typeof item.inactive === "boolean") return !item.inactive;
+  return null;
 }
 
 function stringValue(value: unknown, key: string): string {

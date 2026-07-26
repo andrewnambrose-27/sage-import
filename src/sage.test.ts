@@ -2,11 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SageApiClient,
   SageAuthorizationError,
+  SageReferenceFetchError,
+  SageResponseShapeError,
   SageTokenExchangeError,
   decryptTokenPair,
   encryptTokenPair,
   exchangeAuthorizationCode,
   expiryFromNow,
+  fetchSageLedgerAccounts,
+  fetchSageTaxRates,
   safeStatusFromConnection,
   validateOAuthCallbackInput,
   type SageConnectionConfig,
@@ -128,6 +132,59 @@ describe("SageApiClient", () => {
 
     expect(response.status).toBe(200);
     expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("fetches direct-array ledger accounts and follows pagination headers", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const item = url.includes("page=1")
+        ? { id: "ledger-4010", nominal_code: "4010", displayed_as: "Sales - Services" }
+        : { id: "ledger-4000", nominal_code: "4000", displayed_as: "Sales" };
+      return jsonResponse([item], {
+        headers: { "Content-Type": "application/json", "X-Pagination-TotalPages": "2", "X-Pagination-TotalItems": "2" },
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSageLedgerAccounts(new SageApiClient(store, config, fetcher));
+    expect(result.items.map((item) => item.id)).toEqual(["ledger-4010", "ledger-4000"]);
+    expect(result.diagnostics).toHaveLength(2);
+  });
+
+  it("rejects an unexpected reference response shape instead of returning an empty list", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => jsonResponse({ result: "not-a-collection" })) as unknown as typeof fetch;
+
+    await expect(fetchSageTaxRates(new SageApiClient(store, config, fetcher))).rejects.toThrow(SageResponseShapeError);
+  });
+
+  it("requires reconnection when Sage returns 401 after the one refresh retry", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("old-access", "refresh-token");
+    let requestCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/tax_rates")) {
+        requestCount += 1;
+        return new Response("unauthorized", { status: 401 });
+      }
+      return jsonResponse({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3600 });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchSageTaxRates(new SageApiClient(store, config, fetcher))).rejects.toThrow(SageAuthorizationError);
+    expect(requestCount).toBe(2);
+  });
+
+  it.each([403, 429])("returns a safe reference error for status %s", async (status) => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => new Response("unavailable", { status })) as unknown as typeof fetch;
+
+    await expect(fetchSageTaxRates(new SageApiClient(store, config, fetcher))).rejects.toMatchObject({
+      name: "SageReferenceFetchError",
+      status,
+    } satisfies Partial<SageReferenceFetchError>);
   });
 });
 

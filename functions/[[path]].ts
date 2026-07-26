@@ -8,6 +8,8 @@ import {
   SageApiClient,
   SageAuthorizationError,
   SageBusinessLookupError,
+  SageReferenceFetchError,
+  SageResponseShapeError,
   SageTokenExchangeError,
   createSageAuthorizationUrl,
   encryptTokenPair,
@@ -16,6 +18,8 @@ import {
   fetchConnectedBusiness,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
+  normalizeSageLedgerAccount,
+  normalizeSageTaxRate,
   createSageDraftInvoice,
   searchSageSalesInvoices,
   SageDraftInvoiceRequestError,
@@ -51,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-7";
+const APP_ASSET_VERSION = "20260726-8";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -416,8 +420,8 @@ async function handleSageReferences(env: Env): Promise<Response> {
   }
 
   const [taxRates, ledgerAccounts, taxMappings, ledgerMappings, customerMappings] = await Promise.all([
-    database.value.listSageReferenceCache("tax_rate"),
-    database.value.listSageReferenceCache("ledger_account"),
+    database.value.listSageReferenceCache(businessId, "tax_rate"),
+    database.value.listSageReferenceCache(businessId, "ledger_account"),
     database.value.listReferenceMappings(businessId, "tax_rate"),
     database.value.listReferenceMappings(businessId, "ledger_account"),
     database.value.listCustomerMappings(businessId),
@@ -445,29 +449,54 @@ async function handleSageReferenceRefresh(env: Env): Promise<Response> {
     return jsonResponse(client.body, client.status);
   }
 
+  const connection = await new D1SageConnectionStore(env.DB!).getActiveConnection();
+  if (!connection) {
+    return jsonResponse({ ok: false, error: "Reconnect Sage before refreshing reference data." }, 401);
+  }
+
   try {
     const [ledgerData, taxData] = await Promise.all([
       fetchSageLedgerAccounts(client.value),
       fetchSageTaxRates(client.value),
     ]);
-    const ledgerAccounts = parseSageReferenceItems(ledgerData, "ledger_account");
-    const taxRates = parseSageReferenceItems(taxData, "tax_rate");
+    const ledgerAccounts = parseSageReferenceItems(ledgerData.items.map((item) => ({ ...item, ...normalizeSageLedgerAccount(item) })), "ledger_account");
+    const taxRates = parseSageReferenceItems(taxData.items.map((item) => ({ ...item, ...normalizeSageTaxRate(item) })), "tax_rate");
     const now = new Date().toISOString();
 
-    await Promise.all([
-      database.value.replaceSageReferenceCache("ledger_account", ledgerAccounts, now),
-      database.value.replaceSageReferenceCache("tax_rate", taxRates, now),
-    ]);
+    // A successful but empty collection must not erase a previously usable cache.
+    const cacheWrites: Promise<void>[] = [];
+    if (ledgerAccounts.length > 0) {
+      cacheWrites.push(database.value.replaceSageReferenceCache(connection.sage_business_id, "ledger_account", ledgerAccounts, now));
+    }
+    if (taxRates.length > 0) {
+      cacheWrites.push(database.value.replaceSageReferenceCache(connection.sage_business_id, "tax_rate", taxRates, now));
+    }
+    await Promise.all(cacheWrites);
+
+    const warnings: string[] = [];
+    if (ledgerAccounts.length === 0) warnings.push("Connected to Sage, but no ledger accounts were returned. Check the refresh details or reconnect Sage.");
+    if (taxRates.length === 0) warnings.push("Connected to Sage, but no VAT rates were returned. Check the refresh details or reconnect Sage.");
 
     return jsonResponse({
       ok: true,
-      ledger_accounts: ledgerAccounts.length,
-      tax_rates: taxRates.length,
+      businessId: connection.sage_business_id,
+      businessName: connection.sage_business_name,
+      counts: { ledgerAccounts: ledgerAccounts.length, taxRates: taxRates.length },
+      ledgerAccounts,
+      taxRates,
+      diagnostics: [...ledgerData.diagnostics, ...taxData.diagnostics],
+      warnings,
       refreshed_at: now,
     });
   } catch (error) {
     if (error instanceof SageAuthorizationError) {
       return jsonResponse({ ok: false, error: "Reconnect Sage before refreshing reference data." }, 401);
+    }
+    if (error instanceof SageReferenceFetchError) {
+      return jsonResponse({ ok: false, error: error.message, status: error.status, endpoint: error.endpoint }, error.status === 403 || error.status === 429 ? error.status : 502);
+    }
+    if (error instanceof SageResponseShapeError) {
+      return jsonResponse({ ok: false, error: error.message }, 502);
     }
     console.error("Sage reference refresh failed", safeError(error));
     return jsonResponse({ ok: false, error: "Sage reference data could not be refreshed." }, 502);
@@ -613,8 +642,8 @@ async function handleSageReadiness(request: Request, env: Env): Promise<Response
     database.value.listCustomerMappings(businessId),
     database.value.listReferenceMappings(businessId, "tax_rate"),
     database.value.listReferenceMappings(businessId, "ledger_account"),
-    database.value.listSageReferenceCache("tax_rate"),
-    database.value.listSageReferenceCache("ledger_account"),
+    database.value.listSageReferenceCache(businessId, "tax_rate"),
+    database.value.listSageReferenceCache(businessId, "ledger_account"),
     database.value.importedSourceInvoiceIds(rows.map((row) => String(row.source_invoice_id ?? "")).filter(Boolean)),
   ]);
 
@@ -772,8 +801,8 @@ async function prepareSageDraftInvoice(
     database.listCustomerMappings(businessId),
     database.listReferenceMappings(businessId, "tax_rate"),
     database.listReferenceMappings(businessId, "ledger_account"),
-    database.listSageReferenceCache("tax_rate"),
-    database.listSageReferenceCache("ledger_account"),
+    database.listSageReferenceCache(businessId, "tax_rate"),
+    database.listSageReferenceCache(businessId, "ledger_account"),
     database.importedSourceInvoiceIds([anchor.id]),
   ]);
   const readinessContext = {
@@ -1645,6 +1674,10 @@ function uploadPage(): string {
             </div>
           </div>
           <div id="mappingNotice" class="notice"></div>
+          <details id="sageReferenceDiagnostics" class="reference-diagnostics" hidden>
+            <summary>Refresh details</summary>
+            <div id="sageReferenceDiagnosticsBody"></div>
+          </details>
           <div id="conversionSetupSummary" class="conversion-summary"></div>
           <details class="why-conversion">
             <summary>Why is this needed?</summary>
@@ -2808,6 +2841,8 @@ const sageStatusText = document.querySelector("#sageStatusText");
 const sageConnectLink = document.querySelector("#sageConnectLink");
 const sageDisconnectButton = document.querySelector("#sageDisconnectButton");
 const refreshSageReferencesButton = document.querySelector("#refreshSageReferencesButton");
+const sageReferenceDiagnostics = document.querySelector("#sageReferenceDiagnostics");
+const sageReferenceDiagnosticsBody = document.querySelector("#sageReferenceDiagnosticsBody");
 const mappingNotice = document.querySelector("#mappingNotice");
 const conversionSetupSummary = document.querySelector("#conversionSetupSummary");
 const taxMappingBody = document.querySelector("#taxMappingBody");
@@ -3098,7 +3133,9 @@ refreshSageReferencesButton.addEventListener("click", async () => {
       return;
     }
 
-    renderMappingNotice("success", "Sage options refreshed successfully.");
+    const counts = result.counts || {};
+    renderMappingNotice("success", "Sage options refreshed: " + (counts.taxRates || 0) + " VAT rates and " + (counts.ledgerAccounts || 0) + " ledger accounts found." + (Array.isArray(result.warnings) && result.warnings.length ? " " + result.warnings.join(" ") : ""));
+    renderSageReferenceDiagnostics(result);
     await loadSageReferences();
     await refreshSageReadiness();
   } catch (error) {
@@ -3648,6 +3685,20 @@ async function loadSageReferences() {
     renderMappingScreens();
     console.error(error);
   }
+}
+
+function renderSageReferenceDiagnostics(result) {
+  if (!sageReferenceDiagnostics || !sageReferenceDiagnosticsBody) {
+    return;
+  }
+  const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : [];
+  const counts = result.counts || {};
+  const lastStatus = diagnostics.length ? diagnostics[diagnostics.length - 1].status : "Not available";
+  sageReferenceDiagnostics.hidden = false;
+  sageReferenceDiagnosticsBody.innerHTML =
+    '<p><strong>Connected business:</strong> ' + escapeHtml(result.businessName || "Unknown") + ' (' + escapeHtml(result.businessId || "Unknown") + ')</p>' +
+    '<p><strong>VAT rates:</strong> ' + escapeHtml(String(counts.taxRates || 0)) + ' &middot; <strong>Ledger accounts:</strong> ' + escapeHtml(String(counts.ledgerAccounts || 0)) + ' &middot; <strong>Last Sage status:</strong> ' + escapeHtml(String(lastStatus)) + '</p>' +
+    '<p><strong>Last refreshed:</strong> ' + escapeHtml(result.refreshed_at || "Not available") + '</p>';
 }
 
 async function saveReferenceMapping(mappingType, sourceCode, sourceContext, container) {

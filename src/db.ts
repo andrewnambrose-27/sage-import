@@ -181,16 +181,17 @@ export class ImportDatabase {
     return { batch, invoices };
   }
 
-  async replaceSageReferenceCache(referenceType: SageReferenceType, entries: SageReferenceEntry[], refreshedAt = new Date().toISOString()): Promise<void> {
+  async replaceSageReferenceCache(sageBusinessId: string, referenceType: SageReferenceType, entries: SageReferenceEntry[], refreshedAt = new Date().toISOString()): Promise<void> {
     const statements = [
-      this.db.prepare("DELETE FROM sage_reference_cache WHERE reference_type = ?").bind(referenceType),
+      this.db.prepare("DELETE FROM sage_reference_cache WHERE sage_business_id = ? AND reference_type = ?").bind(sageBusinessId, referenceType),
       ...entries.map((entry) => this.db.prepare(
         `INSERT INTO sage_reference_cache (
-          id, reference_type, sage_entity_id, source_code, sage_display_name,
+          id, sage_business_id, reference_type, sage_entity_id, source_code, sage_display_name,
           is_active, raw_reference_json, refreshed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         createId(),
+        sageBusinessId,
         entry.reference_type,
         entry.sage_entity_id,
         entry.source_code,
@@ -204,13 +205,13 @@ export class ImportDatabase {
     await this.db.batch(statements);
   }
 
-  async listSageReferenceCache(referenceType: SageReferenceType): Promise<SageReferenceEntry[]> {
+  async listSageReferenceCache(sageBusinessId: string, referenceType: SageReferenceType): Promise<SageReferenceEntry[]> {
     const result = await this.db.prepare(
       `SELECT reference_type, sage_entity_id, source_code, sage_display_name, is_active, raw_reference_json
        FROM sage_reference_cache
-       WHERE reference_type = ?
+       WHERE sage_business_id = ? AND reference_type = ?
        ORDER BY sage_display_name`,
-    ).bind(referenceType).all<{
+    ).bind(sageBusinessId, referenceType).all<{
       reference_type: SageReferenceType;
       sage_entity_id: string;
       source_code: string | null;
@@ -225,7 +226,7 @@ export class ImportDatabase {
       source_code: row.source_code,
       sage_display_name: row.sage_display_name,
       is_active: row.is_active === 1,
-      raw: JSON.parse(row.raw_reference_json) as Record<string, unknown>,
+      raw: parseCachedReferenceJson(row.raw_reference_json),
     }));
   }
 
@@ -516,6 +517,15 @@ export function moneyToMinorUnits(value: number | string | null | undefined): nu
   const unsigned = sign === -1 ? text.slice(1) : text;
   const [pounds, pence = ""] = unsigned.split(".");
   return sign * (Number(pounds) * 100 + Number(pence.padEnd(2, "0")));
+}
+
+export function parseCachedReferenceJson(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 export function normalizeCustomerName(value: string): string {

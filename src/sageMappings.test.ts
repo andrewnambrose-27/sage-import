@@ -57,6 +57,22 @@ describe("reference parsing", () => {
     expect(entries).toHaveLength(2);
     expect(activeReferenceEntries(entries).map((entry) => entry.sage_entity_id)).toEqual(["active"]);
   });
+
+  it("keeps genuine direct-array ledger accounts, including code 4010", () => {
+    const entries = parseSageReferenceItems([
+      { id: "ledger-4010", nominal_code: "4010", displayed_as: "Sales - Services", is_active: true },
+    ], "ledger_account");
+
+    expect(entries).toEqual([expect.objectContaining({
+      sage_entity_id: "ledger-4010",
+      source_code: "4010",
+      sage_display_name: "Sales - Services",
+    })]);
+  });
+
+  it("does not silently accept an unknown Sage collection structure", () => {
+    expect(() => parseSageReferenceItems({ result: [] }, "tax_rate")).toThrow("unexpected response structure");
+  });
 });
 
 function invoice(overrides: Partial<ReadinessInput> = {}): ReadinessInput {
