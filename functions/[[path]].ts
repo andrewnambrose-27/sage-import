@@ -56,7 +56,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-16";
+const APP_ASSET_VERSION = "20260726-17";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -4663,7 +4663,24 @@ async function extractPdfText(file) {
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push(content.items.map((item) => item.str).join(" "));
+    const lines = [];
+    for (const item of content.items) {
+      if (!item.str || !Array.isArray(item.transform)) {
+        continue;
+      }
+      const y = Number(item.transform[5]);
+      const x = Number(item.transform[4]);
+      let line = lines.find((candidate) => Math.abs(candidate.y - y) < 2);
+      if (!line) {
+        line = { y, items: [] };
+        lines.push(line);
+      }
+      line.items.push({ x, text: item.str });
+    }
+    pages.push(lines
+      .sort((left, right) => right.y - left.y)
+      .map((line) => line.items.sort((left, right) => left.x - right.x).map((item) => item.text).join(" "))
+      .join("\\n"));
   }
 
   return pages.join("\\n");
