@@ -14,6 +14,7 @@ export interface MonthlyInvoiceReportRow {
 }
 
 const serviceWords = [
+  "removal deposit",
   "removal",
   "removals",
   "packing",
@@ -42,9 +43,9 @@ export function parseMonthlyReportLine(line: string): MonthlyInvoiceReportRow | 
     return null;
   }
 
-  const dateText = line.match(/\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})\b/)?.[0] ?? "";
+  const dateText = line.match(/\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\s+[a-z]+\s+\d{4})\b/i)?.[0] ?? "";
   const date = normalizeDate(dateText);
-  const moneyTexts = line.match(/(?:\u00A3\s*)?-?\d[\d,]*\.\d{2}|\(\s*\u00A3?\s*\d[\d,]*\.\d{2}\s*\)/g) ?? [];
+  const moneyTexts = line.match(/(?:[\u00A3\u0141]\s*)?-?\d[\d,]*\.\d{2}|\(\s*[\u00A3\u0141]?\s*\d[\d,]*\.\d{2}\s*\)/g) ?? [];
   const moneyValues = moneyTexts.map(parseMoney).filter((value): value is number => value !== null);
   const paidStatus = extractPaidStatus(line);
   const warnings: string[] = [];

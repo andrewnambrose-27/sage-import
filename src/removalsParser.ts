@@ -156,6 +156,12 @@ export function normalizeDate(input: string): string | null {
     return validIsoDate(Number(ukMatch[3]), Number(ukMatch[2]), Number(ukMatch[1]));
   }
 
+  const namedMonthMatch = value.match(/^(\d{1,2})\s+([a-z]+)\s+(\d{4})$/i);
+  if (namedMonthMatch) {
+    const month = namedMonthNumber(namedMonthMatch[2]);
+    return month ? validIsoDate(Number(namedMonthMatch[3]), month, Number(namedMonthMatch[1])) : null;
+  }
+
   return null;
 }
 
@@ -166,7 +172,7 @@ export function parseMoney(input: string): number | null {
   }
 
   const negative = /^\(.*\)$/.test(value);
-  const cleaned = value.replace(/[\u00A3,\s()]/g, "");
+  const cleaned = value.replace(/[\u00A3\u0141,\s()]/g, "");
 
   if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) {
     return null;
@@ -239,4 +245,13 @@ function validIsoDate(year: number, month: number, day: number): string | null {
     String(month).padStart(2, "0"),
     String(day).padStart(2, "0"),
   ].join("-");
+}
+
+function namedMonthNumber(value: string): number | null {
+  const months = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+  ];
+  const month = months.indexOf(value.trim().toLowerCase());
+  return month === -1 ? null : month + 1;
 }

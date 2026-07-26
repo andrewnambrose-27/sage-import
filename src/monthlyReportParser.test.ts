@@ -38,6 +38,21 @@ describe("parseMonthlyInvoiceReportText", () => {
     expect(rows[0].customer_name).toBe("Customer Store Ltd");
   });
 
+  it("reads the named dates and removal deposit rows used by the Norman Ferns report", () => {
+    const rows = parseMonthlyInvoiceReportText("4632 PAID 26 May 2026 Removal deposit Charlotte Walker \u01410.00 \u01412155.20");
+
+    expect(rows).toEqual([expect.objectContaining({
+      invoice_number: "4632",
+      paid_status: "paid",
+      date: "2026-05-26",
+      service_type: "removal deposit",
+      customer_name: "Charlotte Walker",
+      vat_amount: 0,
+      invoice_total: 2155.2,
+      warnings: [],
+    })]);
+  });
+
   it("adds warnings for incomplete PDF rows", () => {
     const rows = parseMonthlyInvoiceReportText("7001 Removal");
 
