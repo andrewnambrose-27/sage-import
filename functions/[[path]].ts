@@ -55,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-11";
+const APP_ASSET_VERSION = "20260726-12";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -2552,6 +2552,13 @@ table {
   align-items: end;
 }
 
+.conversion-choice > button {
+  min-height: 46px;
+  min-width: 178px;
+  padding: 0 18px;
+  white-space: nowrap;
+}
+
 .conversion-choice label {
   display: grid;
   gap: 6px;
@@ -2929,6 +2936,7 @@ let latestOriginalFileNames = [];
 let sageReferences = emptySageReferences();
 let activeDraftSourceInvoiceId = null;
 let activeDraftPreview = null;
+const referenceOptionsBySelect = {};
 let previewExpanded = false;
 let reconciliationExpanded = false;
 let referenceAutoRefreshAttempted = false;
@@ -3292,11 +3300,18 @@ function filterReferenceOptions(event) {
   if (!search) {
     return;
   }
-  const select = ledgerMappingBody.querySelector("#" + cssEscape(search.dataset.referenceSearch || ""));
+  const selectId = search.dataset.referenceSearch || "";
+  const select = document.querySelector("#" + cssEscape(selectId));
+  const definition = referenceOptionsBySelect[selectId];
+  if (!select || !definition) {
+    return;
+  }
   const query = String(search.value || "").trim().toLowerCase();
-  for (const option of Array.from(select?.options || [])) {
-    const searchable = (option.dataset.referenceSearchText || option.textContent || "").toLowerCase();
-    option.hidden = Boolean(query) && !searchable.includes(query);
+  const selectedId = select.value;
+  const filtered = query ? definition.entries.filter((entry) => sageReferenceSearchText(entry).toLowerCase().includes(query)) : definition.entries;
+  select.innerHTML = sageReferenceOptionsHtml(filtered, definition.placeholder, definition.labelForEntry);
+  if (filtered.some((entry) => entry.sage_entity_id === selectedId)) {
+    select.value = selectedId;
   }
 }
 
@@ -3891,7 +3906,7 @@ async function saveReferenceMapping(mappingType, sourceCode, sourceContext, cont
     return;
   }
 
-  renderMappingNotice("success", "Mapping saved.");
+  renderMappingNotice("success", "Saved: " + sourceCode + " will be converted to " + option.textContent + ".");
   await loadSageReferences();
 }
 
@@ -4042,11 +4057,16 @@ function distinctBy(values) {
 }
 
 function sageReferenceSelect(id, entries, selectedId, placeholder, labelForEntry) {
+  referenceOptionsBySelect[id] = { entries, placeholder, labelForEntry };
+  return '<select id="' + escapeHtml(id) + '">' + sageReferenceOptionsHtml(entries, placeholder, labelForEntry, selectedId) + '</select>';
+}
+
+function sageReferenceOptionsHtml(entries, placeholder, labelForEntry, selectedId) {
   const options = ['<option value="">' + escapeHtml(placeholder || "Choose Sage record") + '</option>'].concat(entries.map((entry) => {
     const selected = entry.sage_entity_id === selectedId ? " selected" : "";
     return '<option value="' + escapeHtml(entry.sage_entity_id) + '" data-reference-search-text="' + escapeHtml(sageReferenceSearchText(entry)) + '"' + selected + '>' + escapeHtml(labelForEntry ? labelForEntry(entry) : entry.sage_display_name) + '</option>';
   }));
-  return '<select id="' + escapeHtml(id) + '">' + options.join("") + '</select>';
+  return options.join("");
 }
 
 function referenceSearchInput(selectId, placeholder) {
