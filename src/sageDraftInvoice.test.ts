@@ -28,8 +28,8 @@ describe("Sage draft invoice payload", () => {
         due_date: "2026-07-31",
         reference: "RM inv no.4632",
         invoice_lines: [
-          { description: "Removal service", quantity: 1, unit_price: 100.1, ledger_account_id: "ledger-1", tax_rate_id: "tax-1" },
-          { description: "Packing", quantity: 1, unit_price: 25.05, ledger_account_id: "ledger-1", tax_rate_id: "tax-1" },
+          { description: "Removal service", quantity: 1, unit_price: 100.1, tax_amount: 20.02, ledger_account_id: "ledger-1", tax_rate_id: "tax-1" },
+          { description: "Packing", quantity: 1, unit_price: 25.05, tax_amount: 5.01, ledger_account_id: "ledger-1", tax_rate_id: "tax-1" },
         ],
       },
     });
@@ -68,6 +68,13 @@ describe("Sage draft invoice payload", () => {
 
   it("rejects fractional minor units", () => {
     expect(() => minorUnitsToSageNumber(10.5)).toThrow(DraftInvoiceValidationError);
+  });
+
+  it("rejects No VAT where the source VAT is non-zero", () => {
+    expect(() => buildSageDraftInvoice({
+      contactId: "contact-1", contactName: "Acme Ltd", invoiceNumber: "4632", invoiceDate: "2026-07-01", dueDate: "2026-07-31",
+      lines: [{ source: sourceLine(), mapping: { ...mapping(), taxRateName: "No VAT - 0%" } }],
+    })).toThrow("conflicts with a non-zero source VAT");
   });
 });
 

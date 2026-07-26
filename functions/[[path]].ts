@@ -40,7 +40,7 @@ import {
   type SageReferenceType,
   type ReadinessInput,
 } from "../src/sageMappings";
-import { assertDraftCreationSafety, buildSageDraftInvoice, DraftInvoiceValidationError, type DraftInvoicePreview } from "../src/sageDraftInvoice";
+import { assertDraftCreationSafety, buildSageDraftInvoice, draftPreviewFingerprint, DraftInvoiceValidationError, type DraftInvoicePreview } from "../src/sageDraftInvoice";
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
@@ -55,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-12";
+const APP_ASSET_VERSION = "20260726-13";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -683,6 +683,8 @@ async function handleSageDraftDryRun(request: Request, env: Env): Promise<Respon
     ready: true,
     source_invoice_id: prepared.sourceInvoiceId,
     preview: prepared.preview,
+    preview_fingerprint: draftPreviewFingerprint(prepared.preview),
+    preparation_state: "preview_valid",
   });
 }
 
@@ -692,7 +694,7 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
     return jsonResponse(database.body, database.status);
   }
 
-  const body = await request.json() as { source_invoice_id?: string; due_date?: string; confirmed?: boolean };
+  const body = await request.json() as { source_invoice_id?: string; due_date?: string; confirmed?: boolean; preview_fingerprint?: string };
   if (body.confirmed !== true) {
     return jsonResponse({ ok: false, error: "Confirm this one draft invoice before creating it in Sage." }, 400);
   }
@@ -700,6 +702,9 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
   const prepared = await prepareSageDraftInvoice(database.value, await activeSageBusinessId(env), body.source_invoice_id ?? "", body.due_date ?? "");
   if (!prepared.ok) {
     return jsonResponse({ ok: false, error: prepared.error }, prepared.status);
+  }
+  if (!body.preview_fingerprint || body.preview_fingerprint !== draftPreviewFingerprint(prepared.preview)) {
+    return jsonResponse({ ok: false, error: "Draft details changed. Check the updated preview before creating the Sage draft." }, 409);
   }
 
   const client = sageClientFromEnv(env);
@@ -744,6 +749,9 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
       ok: true,
       created: true,
       sage_invoice_id: sageInvoiceId,
+      sage_invoice_reference: sageInvoiceReferenceFromResult(sageResult) ?? prepared.preview.invoice_reference,
+      source_invoice_number: prepared.preview.invoice_reference,
+      total_minor: prepared.preview.totals.gross_minor,
       message: "One Sage draft invoice was created. It has not been sent, released or published.",
     });
   } catch (error) {
@@ -965,6 +973,12 @@ function sageInvoiceIdFromResult(data: unknown): string | null {
   return data && typeof data === "object" && !Array.isArray(data) && typeof (data as Record<string, unknown>).id === "string"
     ? (data as Record<string, string>).id
     : null;
+}
+
+function sageInvoiceReferenceFromResult(data: unknown): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = (data as Record<string, unknown>).reference ?? (data as Record<string, unknown>).displayed_as;
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function sageApiItems(data: unknown): Array<Record<string, unknown>> {
@@ -1733,8 +1747,9 @@ function uploadPage(): string {
               </label>
               <button id="draftDryRunButton" type="button">Check draft details</button>
               <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> I confirm this one draft should be created in Sage.</label>
-              <button id="draftCreateButton" type="button" disabled>Create one draft invoice in Sage</button>
+              <button id="draftCreateButton" type="button" disabled>Create draft in Sage</button>
             </div>
+            <p class="cell-muted">This creates one editable draft in Sage. It does not send it to the customer or record payment.</p>
             <div id="draftInvoicePreview" class="draft-preview"></div>
           </div>
         </section>
@@ -2936,6 +2951,8 @@ let latestOriginalFileNames = [];
 let sageReferences = emptySageReferences();
 let activeDraftSourceInvoiceId = null;
 let activeDraftPreview = null;
+let activeDraftFingerprint = null;
+let draftPreparationState = "no_invoice_selected";
 const referenceOptionsBySelect = {};
 let previewExpanded = false;
 let reconciliationExpanded = false;
@@ -3170,16 +3187,18 @@ draftDryRunButton.addEventListener("click", () => {
 
 draftDueDate.addEventListener("change", () => {
   activeDraftPreview = null;
+  activeDraftFingerprint = null;
+  draftPreparationState = "preview_stale";
   draftCreateButton.disabled = true;
-  renderDraftNotice("error", "Due date changed. Check the draft details again before creating it.");
+  renderDraftNotice("error", "Draft details changed. Check the updated preview before creating the Sage draft.");
 });
 
 draftConfirmCheckbox.addEventListener("change", () => {
-  draftCreateButton.disabled = !activeDraftPreview || !draftConfirmCheckbox.checked;
+  draftCreateButton.disabled = draftPreparationState !== "preview_valid" || !activeDraftPreview || !activeDraftFingerprint || !draftConfirmCheckbox.checked;
 });
 
 draftCreateButton.addEventListener("click", async () => {
-  if (!activeDraftSourceInvoiceId || !activeDraftPreview || !draftConfirmCheckbox.checked) {
+  if (!activeDraftSourceInvoiceId || !activeDraftPreview || !activeDraftFingerprint || draftPreparationState !== "preview_valid" || !draftConfirmCheckbox.checked) {
     return;
   }
   if (!window.confirm("Create one draft invoice in Sage? It will not be sent, released or published.")) {
@@ -3187,6 +3206,7 @@ draftCreateButton.addEventListener("click", async () => {
   }
 
   draftCreateButton.disabled = true;
+  draftPreparationState = "creating";
   draftCreateButton.textContent = "Creating draft...";
   try {
     const response = await fetch("/api/sage/drafts/create", {
@@ -3195,24 +3215,29 @@ draftCreateButton.addEventListener("click", async () => {
       body: JSON.stringify({
         source_invoice_id: activeDraftSourceInvoiceId,
         due_date: draftDueDate.value,
+        preview_fingerprint: activeDraftFingerprint,
         confirmed: true,
       }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
+      draftPreparationState = "failed";
       renderDraftNotice("error", result.error || "The Sage draft invoice could not be created.");
       return;
     }
     const prefix = result.found_existing ? "No new draft was created." : "One draft invoice was created.";
-    renderDraftNotice("success", prefix + " Sage draft ID: " + result.sage_invoice_id + ". It has not been sent, released or published.");
+    draftPreparationState = "created";
+    renderDraftNotice("success", "Draft invoice created in Sage. " + prefix + " Reference: " + (result.sage_invoice_reference || result.sage_invoice_id) + ". No email was sent and no payment was recorded.");
     activeDraftPreview = null;
+    activeDraftFingerprint = null;
     draftConfirmCheckbox.checked = false;
     await refreshSageReadiness();
   } catch (error) {
+    draftPreparationState = "failed";
     renderDraftNotice("error", "The Sage draft invoice result could not be confirmed. Check Sage before trying again.");
     console.error(error);
   } finally {
-    draftCreateButton.textContent = "Create one draft invoice in Sage";
+    draftCreateButton.textContent = "Create draft in Sage";
   }
 });
 
@@ -4339,6 +4364,8 @@ async function previewDraftInvoice(sourceInvoiceId) {
   const changedInvoice = activeDraftSourceInvoiceId !== sourceInvoiceId;
   activeDraftSourceInvoiceId = sourceInvoiceId;
   activeDraftPreview = null;
+  activeDraftFingerprint = null;
+  draftPreparationState = "ready_for_preview";
   draftConfirmCheckbox.checked = false;
   draftCreateButton.disabled = true;
   if (changedInvoice || !draftDueDate.value) {
@@ -4363,6 +4390,8 @@ async function previewDraftInvoice(sourceInvoiceId) {
       return;
     }
     activeDraftPreview = result.preview;
+    activeDraftFingerprint = result.preview_fingerprint;
+    draftPreparationState = "preview_valid";
     renderDraftPreview(result.preview);
     renderDraftNotice("success", "Draft details checked. Review the totals, then confirm the one-off Sage action.");
   } catch (error) {
@@ -4403,6 +4432,7 @@ function renderDraftPreview(preview) {
       draftPreviewCard("Invoice reference", preview.invoice_reference) +
       draftPreviewCard("Invoice date", preview.invoice_date) +
       draftPreviewCard("Due date", preview.due_date) +
+      draftPreviewCard("Customer contact", "Existing Sage contact") +
       draftPreviewCard("Net total", formatMoney(preview.totals.net_minor / 100)) +
       draftPreviewCard("VAT total", formatMoney(preview.totals.vat_minor / 100)) +
       draftPreviewCard("Gross total", formatMoney(preview.totals.gross_minor / 100)) +
@@ -4423,6 +4453,8 @@ function formatMinorMoney(value) {
 function resetDraftInvoiceWorkspace() {
   activeDraftSourceInvoiceId = null;
   activeDraftPreview = null;
+  activeDraftFingerprint = null;
+  draftPreparationState = "no_invoice_selected";
   draftInvoiceEmpty.hidden = false;
   draftInvoiceWorkspace.hidden = true;
   draftInvoicePreview.innerHTML = "";

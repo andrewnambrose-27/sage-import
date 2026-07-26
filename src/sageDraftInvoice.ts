@@ -35,6 +35,7 @@ export interface SageSalesInvoicePayload {
       description: string;
       quantity: number;
       unit_price: number;
+      tax_amount: number;
       ledger_account_id: string;
       tax_rate_id: string;
     }>;
@@ -62,6 +63,18 @@ export interface DraftInvoicePreview {
   };
   reconciliation: SageDraftInvoiceInput["reconciliation"];
   warnings: string[];
+}
+
+export type DraftPreparationState = "no_invoice_selected" | "source_not_saved" | "missing_mapping" | "missing_customer" | "ready_for_preview" | "preview_valid" | "preview_stale" | "creating" | "created" | "failed";
+
+export function draftPreviewFingerprint(preview: DraftInvoicePreview): string {
+  return JSON.stringify({
+    customer: preview.customer,
+    reference: preview.invoice_reference,
+    invoiceDate: preview.invoice_date,
+    dueDate: preview.due_date,
+    lines: preview.lines.map((line) => [line.description, line.ledger_account, line.tax_rate, line.net_minor, line.vat_minor, line.gross_minor]),
+  });
 }
 
 export class DraftInvoiceValidationError extends Error {
@@ -115,6 +128,12 @@ export function buildSageDraftInvoice(input: SageDraftInvoiceInput): DraftInvoic
     if (!source.description.trim() || !mapping.ledgerAccountId || !mapping.taxRateId) {
       throw new DraftInvoiceValidationError("Every invoice line needs a description, ledger mapping and tax mapping.");
     }
+    if (source.net_amount_minor < 0 || source.vat_amount_minor < 0 || source.gross_amount_minor < 0) {
+      throw new DraftInvoiceValidationError("Negative source values need manual review before a Sage draft can be created.");
+    }
+    if (/no vat|no_tax|outside scope/i.test(mapping.taxRateName) && source.vat_amount_minor !== 0) {
+      throw new DraftInvoiceValidationError("The selected No VAT treatment conflicts with a non-zero source VAT amount.");
+    }
 
     return {
       description: source.description,
@@ -127,6 +146,7 @@ export function buildSageDraftInvoice(input: SageDraftInvoiceInput): DraftInvoic
         description: source.description,
         quantity: 1,
         unit_price: minorUnitsToSageNumber(source.net_amount_minor),
+        tax_amount: minorUnitsToSageNumber(source.vat_amount_minor),
         ledger_account_id: mapping.ledgerAccountId,
         tax_rate_id: mapping.taxRateId,
       },
