@@ -547,7 +547,7 @@ export async function searchSageContacts(client: SageApiClient, search: string):
     }
     items.push(...pageItems);
     const next = data.$next ?? data.next;
-    if (!next || pageItems.length === 0 || search.trim()) break;
+    if (!next || pageItems.length < 200 || search.trim()) break;
   }
   return { $items: items };
 }
