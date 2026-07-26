@@ -3165,7 +3165,15 @@ taxMappingBody.addEventListener("click", async (event) => {
 });
 
 ledgerMappingBody.addEventListener("click", async (event) => {
+  const suggestion = event.target instanceof Element ? event.target.closest("[data-suggest-ledger]") : null;
   const button = event.target instanceof Element ? event.target.closest("[data-save-ledger]") : null;
+  if (suggestion) {
+    const select = ledgerMappingBody.querySelector("#" + cssEscape("ledger-" + slug((suggestion.dataset.context || "") + "-" + (suggestion.dataset.suggestLedger || ""))));
+    if (select) {
+      select.value = suggestion.dataset.sageEntityId || "";
+    }
+    return;
+  }
   if (!button) {
     return;
   }
@@ -3173,7 +3181,7 @@ ledgerMappingBody.addEventListener("click", async (event) => {
   await saveReferenceMapping("ledger_account", button.dataset.saveLedger || "", button.dataset.context || "", ledgerMappingBody);
 });
 
-ledgerMappingBody.addEventListener("input", (event) => {
+function filterReferenceOptions(event) {
   const search = event.target instanceof Element ? event.target.closest("[data-reference-search]") : null;
   if (!search) {
     return;
@@ -3181,9 +3189,13 @@ ledgerMappingBody.addEventListener("input", (event) => {
   const select = ledgerMappingBody.querySelector("#" + cssEscape(search.dataset.referenceSearch || ""));
   const query = String(search.value || "").trim().toLowerCase();
   for (const option of Array.from(select?.options || [])) {
-    option.hidden = Boolean(query) && !option.textContent.toLowerCase().includes(query);
+    const searchable = (option.dataset.referenceSearchText || option.textContent || "").toLowerCase();
+    option.hidden = Boolean(query) && !searchable.includes(query);
   }
-});
+}
+
+ledgerMappingBody.addEventListener("input", filterReferenceOptions);
+taxMappingBody.addEventListener("input", filterReferenceOptions);
 
 customerMappingBody.addEventListener("click", async (event) => {
   const searchButton = event.target instanceof Element ? event.target.closest("[data-search-contact]") : null;
@@ -3576,14 +3588,15 @@ function renderTaxMappings() {
   taxMappingBody.innerHTML = codes.map((code) => {
     const saved = sageReferences.tax_mappings.find((mapping) => mapping.source_code === code);
     const usage = taxCodeUsage(code);
-    const suggested = taxSuggestion(code, options);
+    const recommendation = taxRecommendation(code, options);
+    const suggested = recommendation.candidate;
     const savedAvailable = saved && referenceIsAvailable(saved, options);
     const result = saved
       ? '<div class="conversion-result"><div><span>' + escapeHtml(code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-tax="' + escapeHtml(code) + '">Change</button></div>' + (savedAvailable ? "" : '<p class="conversion-unavailable">This saved Sage option is no longer available. Please choose a replacement.</p>')
       : "";
     const suggestion = suggested
-      ? '<div class="conversion-suggestion"><strong>Suggested match: ' + escapeHtml(sageTaxLabel(suggested)) + '</strong><br>Suggested based on the source code and imported VAT values. Confirm with the business or accountant if unsure.<br><button class="secondary-button" type="button" data-suggest-tax="' + escapeHtml(code) + '" data-sage-entity-id="' + escapeHtml(suggested.sage_entity_id) + '">Use suggested option</button></div>'
-      : "";
+      ? '<div class="conversion-suggestion"><strong>Suggested match: ' + escapeHtml(sageTaxLabel(suggested)) + '</strong><br>T9 commonly represents a non-vatable treatment in Sage 50, and all ' + usage.count + ' imported row' + plural(usage.count) + ' currently show ' + formatSterling(usage.vat) + ' VAT. Please confirm this is the intended accounting treatment.<br><button class="secondary-button" type="button" data-suggest-tax="' + escapeHtml(code) + '" data-sage-entity-id="' + escapeHtml(suggested.sage_entity_id) + '">Use suggested option</button></div>'
+      : recommendation.message ? '<p class="conversion-meta">' + escapeHtml(recommendation.message) + '</p>' : "";
     const summary = saved && savedAvailable
       ? escapeHtml(code + " → " + saved.sage_display_name) + '<span>Configured · ' + usage.count + ' transaction' + plural(usage.count) + '</span>'
       : escapeHtml(code) + '<span>Not configured · ' + usage.count + ' transaction' + plural(usage.count) + ' · ' + formatSterling(usage.vat) + ' VAT</span>';
@@ -3591,7 +3604,8 @@ function renderTaxMappings() {
       '<div class="conversion-source"><div><span>Source tax code</span><strong>' + escapeHtml(code) + '</strong></div><div><span>Found in</span><strong>' + escapeHtml(usage.source) + '</strong></div></div>' +
       '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Source net total: ' + formatSterling(usage.net) + ' · Source VAT total: ' + formatSterling(usage.vat) + '<br>Example: ' + escapeHtml(usage.example) + (usage.allZeroVat ? ' · All source VAT values are £0.00' : '') + '</p>' +
       suggestion +
-      '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id, "Select VAT treatment", sageTaxLabel) + '</label><button type="button" data-save-tax="' + escapeHtml(code) + '">Save VAT choice</button></div>' +
+      '<p class="conversion-status">' + escapeHtml(saved && savedAvailable ? "Configured" : recommendation.status) + '</p>' +
+      '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id, "Select VAT treatment", sageTaxLabel) + referenceSearchInput("tax-" + slug(code), "Search VAT name, percentage or description") + '</label><button type="button" data-save-tax="' + escapeHtml(code) + '">Save VAT choice</button></div>' +
       result +
       '</div></details>';
   }).join("");
@@ -3609,6 +3623,8 @@ function renderLedgerMappings() {
   ledgerMappingBody.innerHTML = entries.map((entry) => {
     const saved = sageReferences.ledger_mappings.find((mapping) => mapping.source_code === entry.source_code && mapping.source_context === entry.source_context);
     const usage = ledgerCodeUsage(entry.source_code, entry.source_context);
+    const recommendation = ledgerRecommendation(entry.source_code, entry.source_context, options, usage.description);
+    const suggested = recommendation.candidate;
     const savedAvailable = saved && referenceIsAvailable(saved, options);
     const result = saved
       ? '<div class="conversion-result"><div><span>' + escapeHtml(entry.source_code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Change</button></div>' + (savedAvailable ? "" : '<p class="conversion-unavailable">This saved Sage option is no longer available. Please choose a replacement.</p>')
@@ -3619,7 +3635,9 @@ function renderLedgerMappings() {
     return '<details class="conversion-card"' + (saved && savedAvailable ? "" : " open") + '><summary><strong>' + summary + '</strong></summary><div class="conversion-card-content">' +
       '<div class="conversion-source"><div><span>Source nominal code</span><strong>' + escapeHtml(entry.source_code) + '</strong></div><div><span>Used for</span><strong>' + escapeHtml(formatTransactionType(entry.source_context)) + '</strong></div></div>' +
       '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Total value: ' + formatSterling(usage.total) + '<br>Example: ' + escapeHtml(usage.example) + '</p>' +
-      '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("ledger-" + slug(entry.source_context + "-" + entry.source_code), options, saved?.sage_entity_id, "Select sales or ledger category", sageLedgerLabel) + referenceSearchInput("ledger-" + slug(entry.source_context + "-" + entry.source_code), "Search by category code or name") + '</label><button type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Save category choice</button></div>' +
+      (suggested ? '<div class="conversion-suggestion"><strong>Suggested match found</strong><br>' + escapeHtml(sageLedgerLabel(suggested)) + '<br>' + escapeHtml(sageLedgerGroupLabel(suggested)) + '<br><button class="secondary-button" type="button" data-suggest-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '" data-sage-entity-id="' + escapeHtml(suggested.sage_entity_id) + '">Use suggested option</button></div>' : '<p class="conversion-meta">' + escapeHtml(recommendation.message) + '</p>') +
+      '<p class="conversion-status">' + escapeHtml(saved && savedAvailable ? "Configured" : recommendation.status) + '</p>' +
+      '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("ledger-" + slug(entry.source_context + "-" + entry.source_code), options, saved?.sage_entity_id, "Select sales or ledger category", sageLedgerLabel) + referenceSearchInput("ledger-" + slug(entry.source_context + "-" + entry.source_code), "Search by category code, name or group") + '</label><button type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Save category choice</button></div>' +
       result +
       '</div></details>';
   }).join("");
@@ -3882,7 +3900,7 @@ function distinctBy(values) {
 function sageReferenceSelect(id, entries, selectedId, placeholder, labelForEntry) {
   const options = ['<option value="">' + escapeHtml(placeholder || "Choose Sage record") + '</option>'].concat(entries.map((entry) => {
     const selected = entry.sage_entity_id === selectedId ? " selected" : "";
-    return '<option value="' + escapeHtml(entry.sage_entity_id) + '"' + selected + '>' + escapeHtml(labelForEntry ? labelForEntry(entry) : entry.sage_display_name) + '</option>';
+    return '<option value="' + escapeHtml(entry.sage_entity_id) + '" data-reference-search-text="' + escapeHtml(sageReferenceSearchText(entry)) + '"' + selected + '>' + escapeHtml(labelForEntry ? labelForEntry(entry) : entry.sage_display_name) + '</option>';
   }));
   return '<select id="' + escapeHtml(id) + '">' + options.join("") + '</select>';
 }
@@ -3939,14 +3957,41 @@ function ledgerCodeUsage(sourceCode, sourceContext) {
     count: rows.length,
     total: rows.reduce((total, row) => total + grossAmount(row), 0),
     example: rows[0]?.reference || rows[0]?.invoice_number || "No reference available",
+    description: rows.map((row) => row.description).find(Boolean) || "",
   };
 }
 
-function taxSuggestion(code, entries) {
-  if (code.toUpperCase() !== "T9") {
-    return null;
-  }
-  return entries.find((entry) => sageTaxLabel(entry).toLowerCase().includes("no vat")) || null;
+function ledgerRecommendation(sourceCode, transactionType, entries, sourceDescription) {
+  const code = normaliseSageCode(sourceCode);
+  const exactCodes = entries.filter((entry) => normaliseSageCode(entry.source_code) === code);
+  if (exactCodes.length === 1) return { status: "Exact code match", candidate: exactCodes[0], message: "Exact code match" };
+  if (exactCodes.length > 1) return { status: "Multiple possible matches", candidate: null, message: "Multiple Sage categories use this code. Choose the correct one." };
+  const description = normaliseSageText(sourceDescription);
+  const exactNames = description ? entries.filter((entry) => normaliseSageText(entry.sage_display_name) === description || normaliseSageText(entry.raw?.name) === description) : [];
+  if (exactNames.length === 1) return { status: "Suggested by source code", candidate: exactNames[0], message: "Suggested by source description" };
+  if (exactNames.length > 1) return { status: "Multiple possible matches", candidate: null, message: "Several Sage categories have this name. Choose the correct one." };
+  const compatible = entries.filter((entry) => /sales|income|revenue/.test((String(entry.raw?.accountType || entry.raw?.account_type || "") + " " + String(entry.raw?.accountGroup || entry.raw?.account_group || "")).toLowerCase()));
+  if (compatible.length === 1 && ["removal", "deposit", "ad_hoc", "credit_note"].includes(transactionType)) return { status: "Suggested by source code", candidate: compatible[0], message: "Suggested by transaction type" };
+  return { status: "Manual choice required", candidate: null, message: "Manual choice required" };
+}
+
+function taxRecommendation(code, entries) {
+  if (normaliseSageCode(code) !== "T9") return { status: "Manual choice required", candidate: null, message: "Manual choice required" };
+  const salesEntries = entries.filter((entry) => entry.raw?.usableForSales !== false && entry.raw?.usable_for_sales !== false);
+  const named = salesEntries.filter((entry) => /(no\s*vat|not\s*applicable|outside\s*scope)/i.test(entry.sage_display_name + " " + String(entry.raw?.name || "") + " " + String(entry.raw?.description || "")));
+  if (named.length === 1) return { status: "Suggested by source code", candidate: named[0], message: "Suggested by source code" };
+  if (named.length > 1) return { status: "Multiple possible matches", candidate: null, message: "Several 0% VAT options are available. Please choose the correct accounting treatment." };
+  const zeroRates = salesEntries.filter((entry) => sagePercentage(entry) === 0);
+  if (zeroRates.length > 1) return { status: "Multiple possible matches", candidate: null, message: "Several 0% VAT options are available. Please choose the correct accounting treatment." };
+  return { status: "Manual choice required", candidate: null, message: "Manual choice required" };
+}
+
+function normaliseSageCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normaliseSageText(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function referenceIsAvailable(mapping, entries) {
@@ -3961,6 +4006,18 @@ function sageTaxLabel(entry) {
 function sageLedgerLabel(entry) {
   const code = entry.source_code ? entry.source_code + " - " : "";
   return code + entry.sage_display_name;
+}
+
+function sageLedgerGroupLabel(entry) {
+  const raw = entry.raw || {};
+  const group = raw.accountGroup || raw.account_group || raw.ledger_account_group || "";
+  const type = raw.accountType || raw.account_type || raw.ledger_account_type || "";
+  return group && type ? group + " · " + type : group || type || "Sage category";
+}
+
+function sageReferenceSearchText(entry) {
+  const raw = entry.raw || {};
+  return [entry.source_code, entry.sage_display_name, raw.name, raw.displayName, raw.description, raw.accountGroup, raw.account_group, raw.ledger_account_group, sagePercentage(entry)].filter((value) => value !== null && value !== undefined).join(" ");
 }
 
 function sagePercentage(entry) {
