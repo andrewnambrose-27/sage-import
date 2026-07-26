@@ -55,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-9";
+const APP_ASSET_VERSION = "20260726-10";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1431,10 +1431,6 @@ function uploadPage(): string {
               <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2></div>
               <p>Start with the main removal invoices CSV. Add deposits, ad hoc invoices, credit notes and PDFs where you have them, then check the files before moving on.</p>
             </div>
-            <div class="button-row">
-              <button id="checkButton" type="button">Check files</button>
-              <button id="clearButton" class="secondary-button" type="button" disabled>Clear</button>
-            </div>
           </div>
 
           <form id="uploadForm" class="upload-grid">
@@ -1534,6 +1530,10 @@ function uploadPage(): string {
               <p class="field-message" id="invoicePdfsMessage">No files selected yet. This is optional.</p>
             </article>
           </form>
+          <div class="upload-actions">
+            <button id="checkButton" type="button" disabled>Check files</button>
+            <button id="clearButton" class="secondary-button" type="button" disabled>Clear files</button>
+          </div>
         </section>
 
         <section class="results-panel" aria-live="polite">
@@ -1553,8 +1553,8 @@ function uploadPage(): string {
             <article><strong>0.00</strong><span>Candidate value</span></article>
             <article><strong>0.00</strong><span>Excluded value</span></article>
           </div>
-          <div class="table-wrap">
-            <table>
+          <div id="summaryTableWrap" class="table-wrap summary-table-wrap preview-collapsed">
+            <table class="summary-table">
               <thead>
                 <tr>
                   <th>File</th>
@@ -1577,6 +1577,7 @@ function uploadPage(): string {
               </tbody>
             </table>
           </div>
+          <div class="preview-actions"><button id="togglePreviewButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
         </section>
 
         <section class="results-panel" aria-live="polite">
@@ -2005,6 +2006,26 @@ h2 {
   padding: 22px;
 }
 
+.upload-actions,
+.preview-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.upload-actions button {
+  min-height: 48px;
+  padding: 0 24px;
+  font-size: 1rem;
+}
+
+.upload-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .sage-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2319,6 +2340,28 @@ h2 {
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.summary-table-wrap.preview-collapsed {
+  max-height: 390px;
+  overflow-y: hidden;
+}
+
+.summary-table {
+  min-width: 1420px;
+}
+
+.summary-table th:last-child,
+.summary-table td:last-child {
+  min-width: 280px;
+  white-space: normal;
+}
+
+.summary-table td:last-child .badge {
+  display: inline-block;
+  max-width: 320px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 table {
@@ -2836,6 +2879,8 @@ const reconciliationBody = document.querySelector("#reconciliationBody");
 const reconciliationIntro = document.querySelector("#reconciliationIntro");
 const clearButton = document.querySelector("#clearButton");
 const checkButton = document.querySelector("#checkButton");
+const summaryTableWrap = document.querySelector("#summaryTableWrap");
+const togglePreviewButton = document.querySelector("#togglePreviewButton");
 const reviewBody = document.querySelector("#reviewBody");
 const reviewIntro = document.querySelector("#reviewIntro");
 const reviewFilters = document.querySelector("#reviewFilters");
@@ -2871,6 +2916,8 @@ let latestOriginalFileNames = [];
 let sageReferences = emptySageReferences();
 let activeDraftSourceInvoiceId = null;
 let activeDraftPreview = null;
+let previewExpanded = false;
+let referenceAutoRefreshAttempted = false;
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -2962,8 +3009,16 @@ for (const slot of uploadSlots) {
   });
 }
 
+updateUploadActionState();
+
 loadSageStatus();
 loadSageReferences();
+
+togglePreviewButton.addEventListener("click", () => {
+  previewExpanded = !previewExpanded;
+  summaryTableWrap.classList.toggle("preview-collapsed", !previewExpanded);
+  togglePreviewButton.textContent = previewExpanded ? "Show fewer rows" : "Show all rows";
+});
 
 reviewFilters.addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("[data-filter]") : null;
@@ -3293,7 +3348,7 @@ checkButton.addEventListener("click", async () => {
     resetReviewScreen();
     console.error(error);
   } finally {
-    checkButton.disabled = false;
+    updateUploadActionState();
     checkButton.textContent = "Check files";
   }
 });
@@ -3314,13 +3369,14 @@ clearButton.addEventListener("click", () => {
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
   reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
   clearButton.disabled = true;
+  updateUploadActionState();
 });
 
 function updateFieldMessage(slot) {
   const files = getFiles(slot);
   document.querySelector('[data-slot="' + slot.id + '"]').classList.toggle("has-file", files.length > 0);
   document.querySelector('[data-remove-file="' + slot.id + '"]').hidden = files.length === 0;
-  clearButton.disabled = !uploadSlots.some((item) => getFiles(item).length > 0);
+  updateUploadActionState();
   if (files.length === 0) {
     setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
     return;
@@ -3332,6 +3388,20 @@ function updateFieldMessage(slot) {
   } else {
     setFieldMessage(slot.id, files.length + " file" + plural(files.length) + " ready to check.", "success");
   }
+}
+
+function updateUploadActionState() {
+  const hasFiles = uploadSlots.some((item) => getFiles(item).length > 0);
+  checkButton.disabled = !hasFiles;
+  clearButton.disabled = !hasFiles;
+}
+
+function updatePreviewToggle(rowCount) {
+  const hasMoreRows = rowCount > 3;
+  previewExpanded = false;
+  summaryTableWrap.classList.toggle("preview-collapsed", hasMoreRows);
+  togglePreviewButton.hidden = !hasMoreRows;
+  togglePreviewButton.textContent = "Show all rows";
 }
 
 function validateSlot(slot) {
@@ -3388,6 +3458,7 @@ function validateFile(file, slot) {
 }
 
 function renderFileSummary(items) {
+  updatePreviewToggle(items.length);
   renderClassificationSummary();
   resetReviewScreen();
   latestOriginalFileNames = items.filter((item) => !item.missing).map((item) => item.fileName);
@@ -3440,6 +3511,7 @@ async function parseCsvFiles() {
 
 function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
+  updatePreviewToggle(rows.length);
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
   latestOriginalFileNames = [
@@ -3727,6 +3799,19 @@ async function loadSageReferences() {
       ledger_mappings: data.ledger_mappings || [],
       customer_mappings: data.customer_mappings || [],
     };
+    if (!referenceAutoRefreshAttempted && sageReferences.tax_rates.length === 0 && sageReferences.ledger_accounts.length === 0) {
+      referenceAutoRefreshAttempted = true;
+      const refreshResponse = await fetch("/api/sage/references/refresh", { method: "POST" });
+      const refreshResult = await refreshResponse.json();
+      if (!refreshResponse.ok || !refreshResult.ok) {
+        renderMappingNotice("error", refreshResult.error || "Sage options could not be loaded. Use Refresh Sage options to try again.");
+      } else {
+        renderSageReferenceDiagnostics(refreshResult);
+        renderMappingNotice("success", "Sage options refreshed: " + (refreshResult.counts?.taxRates || 0) + " VAT rates and " + (refreshResult.counts?.ledgerAccounts || 0) + " ledger accounts found.");
+        await loadSageReferences();
+        return;
+      }
+    }
     renderMappingScreens();
     await refreshSageReadiness();
   } catch (error) {
@@ -4467,6 +4552,7 @@ function renderNotice(state, message) {
 }
 
 function renderEmpty(message) {
+  updatePreviewToggle(0);
   summaryBody.innerHTML = '<tr><td colspan="13" class="empty-state">' + escapeHtml(message) + "</td></tr>";
 }
 
