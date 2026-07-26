@@ -233,16 +233,17 @@ export class ImportDatabase {
     const now = new Date().toISOString();
     await this.db.prepare(
       `INSERT INTO sage_reference_mappings (
-        id, mapping_type, source_code, source_context, sage_entity_id,
+        id, sage_business_id, mapping_type, source_code, source_context, sage_entity_id,
         sage_display_name, manually_confirmed, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(mapping_type, source_code, source_context) DO UPDATE SET
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(sage_business_id, mapping_type, source_code, source_context) DO UPDATE SET
         sage_entity_id = excluded.sage_entity_id,
         sage_display_name = excluded.sage_display_name,
         manually_confirmed = excluded.manually_confirmed,
         updated_at = excluded.updated_at`,
     ).bind(
       createId(),
+      input.sage_business_id,
       input.mapping_type,
       input.source_code,
       input.source_context,
@@ -254,19 +255,20 @@ export class ImportDatabase {
     ).run();
   }
 
-  async listReferenceMappings(mappingType?: SageReferenceType): Promise<SageReferenceMapping[]> {
+  async listReferenceMappings(sageBusinessId: string, mappingType?: SageReferenceType): Promise<SageReferenceMapping[]> {
     const result = mappingType
       ? await this.db.prepare(
-        `SELECT mapping_type, source_code, source_context, sage_entity_id, sage_display_name, manually_confirmed
+        `SELECT sage_business_id, mapping_type, source_code, source_context, sage_entity_id, sage_display_name, manually_confirmed
          FROM sage_reference_mappings
-         WHERE mapping_type = ?
+         WHERE sage_business_id = ? AND mapping_type = ?
          ORDER BY source_context, source_code`,
-      ).bind(mappingType).all<SageReferenceMappingRow>()
+      ).bind(sageBusinessId, mappingType).all<SageReferenceMappingRow>()
       : await this.db.prepare(
-        `SELECT mapping_type, source_code, source_context, sage_entity_id, sage_display_name, manually_confirmed
+        `SELECT sage_business_id, mapping_type, source_code, source_context, sage_entity_id, sage_display_name, manually_confirmed
          FROM sage_reference_mappings
+         WHERE sage_business_id = ?
          ORDER BY mapping_type, source_context, source_code`,
-      ).all<SageReferenceMappingRow>();
+      ).bind(sageBusinessId).all<SageReferenceMappingRow>();
 
     return (result.results ?? []).map(referenceMappingFromRow);
   }
@@ -276,17 +278,19 @@ export class ImportDatabase {
     await this.db.batch([
       this.db.prepare(
         `DELETE FROM customer_mappings
-         WHERE normalized_customer_name = ?
+         WHERE sage_business_id = ?
+           AND normalized_customer_name = ?
            AND COALESCE(customer_email, '') = ?
            AND COALESCE(postcode, '') = ?`,
-      ).bind(input.normalized_customer_name, input.customer_email ?? "", input.postcode ?? ""),
+      ).bind(input.sage_business_id, input.normalized_customer_name, input.customer_email ?? "", input.postcode ?? ""),
       this.db.prepare(
         `INSERT INTO customer_mappings (
-          id, normalized_customer_name, customer_email, postcode, sage_contact_id,
+          id, sage_business_id, normalized_customer_name, customer_email, postcode, sage_contact_id,
           sage_contact_display_name, manually_confirmed, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         createId(),
+        input.sage_business_id,
         input.normalized_customer_name,
         input.customer_email,
         input.postcode,
@@ -299,12 +303,13 @@ export class ImportDatabase {
     ]);
   }
 
-  async listCustomerMappings(): Promise<CustomerMapping[]> {
+  async listCustomerMappings(sageBusinessId: string): Promise<CustomerMapping[]> {
     const result = await this.db.prepare(
-      `SELECT normalized_customer_name, customer_email, postcode, sage_contact_id, sage_contact_display_name, manually_confirmed
+      `SELECT sage_business_id, normalized_customer_name, customer_email, postcode, sage_contact_id, sage_contact_display_name, manually_confirmed
        FROM customer_mappings
+       WHERE sage_business_id = ?
        ORDER BY normalized_customer_name`,
-    ).all<CustomerMappingRow>();
+    ).bind(sageBusinessId).all<CustomerMappingRow>();
 
     return (result.results ?? []).map(customerMappingFromRow);
   }
@@ -433,6 +438,7 @@ export class ImportDatabase {
 }
 
 interface SageReferenceMappingRow {
+  sage_business_id: string;
   mapping_type: SageReferenceType;
   source_code: string;
   source_context: string;
@@ -442,6 +448,7 @@ interface SageReferenceMappingRow {
 }
 
 interface CustomerMappingRow {
+  sage_business_id: string;
   normalized_customer_name: string;
   customer_email: string | null;
   postcode: string | null;
@@ -568,6 +575,7 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 function referenceMappingFromRow(row: SageReferenceMappingRow): SageReferenceMapping {
   return {
+    sage_business_id: row.sage_business_id,
     mapping_type: row.mapping_type,
     source_code: row.source_code,
     source_context: row.source_context,
@@ -579,6 +587,7 @@ function referenceMappingFromRow(row: SageReferenceMappingRow): SageReferenceMap
 
 function customerMappingFromRow(row: CustomerMappingRow): CustomerMapping {
   return {
+    sage_business_id: row.sage_business_id,
     normalized_customer_name: row.normalized_customer_name,
     customer_email: row.customer_email,
     postcode: row.postcode,

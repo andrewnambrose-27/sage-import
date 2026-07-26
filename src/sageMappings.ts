@@ -20,6 +20,7 @@ export interface SageReferenceEntry {
 }
 
 export interface SageReferenceMapping {
+  sage_business_id: string;
   mapping_type: SageReferenceType;
   source_code: string;
   source_context: string;
@@ -29,6 +30,7 @@ export interface SageReferenceMapping {
 }
 
 export interface CustomerMapping {
+  sage_business_id: string;
   normalized_customer_name: string;
   customer_email: string | null;
   postcode: string | null;

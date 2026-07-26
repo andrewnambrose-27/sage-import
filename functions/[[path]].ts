@@ -51,7 +51,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-6";
+const APP_ASSET_VERSION = "20260726-7";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -391,18 +391,36 @@ async function handleSageStatus(env: Env): Promise<Response> {
   return jsonResponse({ ...status, storage_configured: true });
 }
 
+async function activeSageBusinessId(env: Env): Promise<string | null> {
+  if (!env.DB) {
+    return null;
+  }
+  const connection = await new D1SageConnectionStore(env.DB).getActiveConnection();
+  return connection?.sage_business_id ?? null;
+}
+
+function availableMappings<T extends { sage_entity_id: string }>(mappings: T[], entries: Array<{ sage_entity_id: string }>): T[] {
+  const availableIds = new Set(entries.map((entry) => entry.sage_entity_id));
+  return mappings.filter((mapping) => availableIds.has(mapping.sage_entity_id));
+}
+
 async function handleSageReferences(env: Env): Promise<Response> {
   const database = databaseFromEnv(env);
   if (!database.ok) {
     return jsonResponse(database.body, database.status);
   }
 
+  const businessId = await activeSageBusinessId(env);
+  if (!businessId) {
+    return jsonResponse({ ok: false, error: "Connect Sage before setting up conversions." }, 401);
+  }
+
   const [taxRates, ledgerAccounts, taxMappings, ledgerMappings, customerMappings] = await Promise.all([
     database.value.listSageReferenceCache("tax_rate"),
     database.value.listSageReferenceCache("ledger_account"),
-    database.value.listReferenceMappings("tax_rate"),
-    database.value.listReferenceMappings("ledger_account"),
-    database.value.listCustomerMappings(),
+    database.value.listReferenceMappings(businessId, "tax_rate"),
+    database.value.listReferenceMappings(businessId, "ledger_account"),
+    database.value.listCustomerMappings(businessId),
   ]);
 
   return jsonResponse({
@@ -474,7 +492,13 @@ async function handleSageReferenceMappingSave(request: Request, env: Env): Promi
     return jsonResponse({ ok: false, error: "Mapping details are incomplete." }, 400);
   }
 
+  const businessId = await activeSageBusinessId(env);
+  if (!businessId) {
+    return jsonResponse({ ok: false, error: "Connect Sage before saving conversion choices." }, 401);
+  }
+
   await database.value.saveReferenceMapping({
+    sage_business_id: businessId,
     mapping_type: body.mapping_type,
     source_code: body.source_code,
     source_context: body.mapping_type === "ledger_account" ? String(body.source_context ?? "") : "",
@@ -510,7 +534,7 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
     const [exactData, normalizedData, savedMappings] = await Promise.all([
       searchSageContacts(client.value, customerName || normalizedCustomerName),
       normalizedCustomerName && normalizedCustomerName !== customerName ? searchSageContacts(client.value, normalizedCustomerName) : Promise.resolve({ $items: [] }),
-      database.value.listCustomerMappings(),
+      database.value.listCustomerMappings((await activeSageBusinessId(env)) ?? ""),
     ]);
     const matchesById = new Map([
       ...parseSageContactItems(exactData),
@@ -555,7 +579,13 @@ async function handleSageCustomerMappingSave(request: Request, env: Env): Promis
     return jsonResponse({ ok: false, error: "Customer mapping details are incomplete." }, 400);
   }
 
+  const businessId = await activeSageBusinessId(env);
+  if (!businessId) {
+    return jsonResponse({ ok: false, error: "Connect Sage before saving customer matches." }, 401);
+  }
+
   await database.value.saveCustomerMapping({
+    sage_business_id: businessId,
     normalized_customer_name: body.normalized_customer_name,
     customer_email: body.customer_email ?? null,
     postcode: body.postcode ?? null,
@@ -575,17 +605,23 @@ async function handleSageReadiness(request: Request, env: Env): Promise<Response
 
   const body = await request.json() as { rows?: Array<Record<string, unknown>> };
   const rows = Array.isArray(body.rows) ? body.rows : [];
-  const [customerMappings, taxMappings, ledgerMappings, importedIds] = await Promise.all([
-    database.value.listCustomerMappings(),
-    database.value.listReferenceMappings("tax_rate"),
-    database.value.listReferenceMappings("ledger_account"),
+  const businessId = await activeSageBusinessId(env);
+  if (!businessId) {
+    return jsonResponse({ ok: false, error: "Connect Sage before checking conversion readiness." }, 401);
+  }
+  const [customerMappings, taxMappings, ledgerMappings, taxRates, ledgerAccounts, importedIds] = await Promise.all([
+    database.value.listCustomerMappings(businessId),
+    database.value.listReferenceMappings(businessId, "tax_rate"),
+    database.value.listReferenceMappings(businessId, "ledger_account"),
+    database.value.listSageReferenceCache("tax_rate"),
+    database.value.listSageReferenceCache("ledger_account"),
     database.value.importedSourceInvoiceIds(rows.map((row) => String(row.source_invoice_id ?? "")).filter(Boolean)),
   ]);
 
   const context = {
     customerMappings,
-    taxMappings,
-    ledgerMappings,
+    taxMappings: availableMappings(taxMappings, activeReferenceEntries(taxRates)),
+    ledgerMappings: availableMappings(ledgerMappings, activeReferenceEntries(ledgerAccounts)),
     importedSourceInvoiceIds: importedIds,
   };
 
@@ -607,7 +643,7 @@ async function handleSageDraftDryRun(request: Request, env: Env): Promise<Respon
   }
 
   const body = await request.json() as { source_invoice_id?: string; due_date?: string };
-  const prepared = await prepareSageDraftInvoice(database.value, body.source_invoice_id ?? "", body.due_date ?? "");
+  const prepared = await prepareSageDraftInvoice(database.value, await activeSageBusinessId(env), body.source_invoice_id ?? "", body.due_date ?? "");
   if (!prepared.ok) {
     return jsonResponse({ ok: false, error: prepared.error }, prepared.status);
   }
@@ -632,7 +668,7 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
     return jsonResponse({ ok: false, error: "Confirm this one draft invoice before creating it in Sage." }, 400);
   }
 
-  const prepared = await prepareSageDraftInvoice(database.value, body.source_invoice_id ?? "", body.due_date ?? "");
+  const prepared = await prepareSageDraftInvoice(database.value, await activeSageBusinessId(env), body.source_invoice_id ?? "", body.due_date ?? "");
   if (!prepared.ok) {
     return jsonResponse({ ok: false, error: prepared.error }, prepared.status);
   }
@@ -707,6 +743,7 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
 
 async function prepareSageDraftInvoice(
   database: ReturnType<typeof createImportDatabase>,
+  businessId: string | null,
   sourceInvoiceId: string,
   dueDate: string,
 ): Promise<
@@ -727,13 +764,24 @@ async function prepareSageDraftInvoice(
     return { ok: false, status: 400, error: "This invoice is missing its Removals Manager number or date." };
   }
 
-  const [customerMappings, taxMappings, ledgerMappings, importedIds] = await Promise.all([
-    database.listCustomerMappings(),
-    database.listReferenceMappings("tax_rate"),
-    database.listReferenceMappings("ledger_account"),
+  if (!businessId) {
+    return { ok: false, status: 401, error: "Connect Sage before preparing a draft invoice." };
+  }
+
+  const [customerMappings, taxMappings, ledgerMappings, taxRates, ledgerAccounts, importedIds] = await Promise.all([
+    database.listCustomerMappings(businessId),
+    database.listReferenceMappings(businessId, "tax_rate"),
+    database.listReferenceMappings(businessId, "ledger_account"),
+    database.listSageReferenceCache("tax_rate"),
+    database.listSageReferenceCache("ledger_account"),
     database.importedSourceInvoiceIds([anchor.id]),
   ]);
-  const readinessContext = { customerMappings, taxMappings, ledgerMappings, importedSourceInvoiceIds: importedIds };
+  const readinessContext = {
+    customerMappings,
+    taxMappings: availableMappings(taxMappings, activeReferenceEntries(taxRates)),
+    ledgerMappings: availableMappings(ledgerMappings, activeReferenceEntries(ledgerAccounts)),
+    importedSourceInvoiceIds: importedIds,
+  };
 
   if (importedIds.has(anchor.id)) {
     return { ok: false, status: 409, error: "This source invoice already has a Sage import record. Check Sage before another attempt." };
@@ -767,8 +815,8 @@ async function prepareSageDraftInvoice(
       dueDate,
       reconciliation,
       lines: lines.map((line) => {
-        const tax = taxMappings.find((mapping) => mapping.manually_confirmed && mapping.source_code === line.rm_tax_code);
-        const ledger = ledgerMappings.find((mapping) =>
+        const tax = readinessContext.taxMappings.find((mapping) => mapping.manually_confirmed && mapping.source_code === line.rm_tax_code);
+        const ledger = readinessContext.ledgerMappings.find((mapping) =>
           mapping.manually_confirmed && mapping.source_code === line.rm_nominal_code && mapping.source_context === line.source_type,
         );
         if (!tax || !ledger) {
@@ -1598,6 +1646,11 @@ function uploadPage(): string {
           </div>
           <div id="mappingNotice" class="notice"></div>
           <div id="conversionSetupSummary" class="conversion-summary"></div>
+          <details class="why-conversion">
+            <summary>Why is this needed?</summary>
+            <p>The uploaded CSV was created for Sage 50 and contains codes such as T9 and 4010. Sage Accounting uses its own VAT-rate and category records, so the app needs to know which Sage Accounting option each source code represents.</p>
+            <p>You normally only need to complete this once. The app will reuse the saved choices on future imports.</p>
+          </details>
           <div class="mapping-grid">
             <article>
               <h3>VAT conversion</h3>
@@ -1615,7 +1668,7 @@ function uploadPage(): string {
             </article>
             <article>
               <h3>Customer matching</h3>
-              <p>Search Sage contacts and manually confirm the right match. Fuzzy matches are never accepted automatically.</p>
+              <p>Match customers from the uploaded files to existing Sage contacts. Suggested matches are never accepted automatically.</p>
               <div id="customerMappingBody" class="mapping-list">
                 <p class="empty-state">No customers found in the reviewed rows yet.</p>
               </div>
@@ -2309,13 +2362,68 @@ table {
   color: var(--sage-dark);
 }
 
+.why-conversion {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.why-conversion summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.why-conversion p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .conversion-card {
   display: grid;
-  gap: 12px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+}
+
+.conversion-card summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+
+.conversion-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.conversion-card summary::after {
+  content: "+";
+  color: var(--sage-dark);
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.conversion-card[open] summary::after {
+  content: "−";
+}
+
+.conversion-card summary span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.conversion-card-content {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
 }
 
 .conversion-card h4,
@@ -2377,6 +2485,13 @@ table {
   color: #72591f;
   font-size: 0.88rem;
   line-height: 1.4;
+}
+
+.conversion-unavailable {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.88rem;
+  font-weight: 750;
 }
 
 .conversion-result {
@@ -2983,7 +3098,7 @@ refreshSageReferencesButton.addEventListener("click", async () => {
       return;
     }
 
-    renderMappingNotice("success", "Refreshed " + result.tax_rates + " tax rate" + plural(result.tax_rates) + " and " + result.ledger_accounts + " ledger account" + plural(result.ledger_accounts) + ".");
+    renderMappingNotice("success", "Sage options refreshed successfully.");
     await loadSageReferences();
     await refreshSageReadiness();
   } catch (error) {
@@ -3425,19 +3540,23 @@ function renderTaxMappings() {
     const saved = sageReferences.tax_mappings.find((mapping) => mapping.source_code === code);
     const usage = taxCodeUsage(code);
     const suggested = taxSuggestion(code, options);
+    const savedAvailable = saved && referenceIsAvailable(saved, options);
     const result = saved
-      ? '<div class="conversion-result"><div><span>' + escapeHtml(code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-tax="' + escapeHtml(code) + '">Change</button></div>'
+      ? '<div class="conversion-result"><div><span>' + escapeHtml(code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-tax="' + escapeHtml(code) + '">Change</button></div>' + (savedAvailable ? "" : '<p class="conversion-unavailable">This saved Sage option is no longer available. Please choose a replacement.</p>')
       : "";
     const suggestion = suggested
-      ? '<div class="conversion-suggestion"><strong>Suggested match: ' + escapeHtml(sageTaxLabel(suggested)) + '</strong><br>T9 commonly represents transactions outside the scope of VAT in Sage 50. Please confirm this matches the business accounting treatment.<br><button class="secondary-button" type="button" data-suggest-tax="' + escapeHtml(code) + '" data-sage-entity-id="' + escapeHtml(suggested.sage_entity_id) + '">Use suggested option</button></div>'
+      ? '<div class="conversion-suggestion"><strong>Suggested match: ' + escapeHtml(sageTaxLabel(suggested)) + '</strong><br>Suggested based on the source code and imported VAT values. Confirm with the business or accountant if unsure.<br><button class="secondary-button" type="button" data-suggest-tax="' + escapeHtml(code) + '" data-sage-entity-id="' + escapeHtml(suggested.sage_entity_id) + '">Use suggested option</button></div>'
       : "";
-    return '<div class="conversion-card">' +
+    const summary = saved && savedAvailable
+      ? escapeHtml(code + " → " + saved.sage_display_name) + '<span>Configured · ' + usage.count + ' transaction' + plural(usage.count) + '</span>'
+      : escapeHtml(code) + '<span>Not configured · ' + usage.count + ' transaction' + plural(usage.count) + ' · ' + formatSterling(usage.vat) + ' VAT</span>';
+    return '<details class="conversion-card"' + (saved && savedAvailable ? "" : " open") + '><summary><strong>' + summary + '</strong></summary><div class="conversion-card-content">' +
       '<div class="conversion-source"><div><span>Source tax code</span><strong>' + escapeHtml(code) + '</strong></div><div><span>Found in</span><strong>' + escapeHtml(usage.source) + '</strong></div></div>' +
       '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Source net total: ' + formatSterling(usage.net) + ' · Source VAT total: ' + formatSterling(usage.vat) + '<br>Example: ' + escapeHtml(usage.example) + (usage.allZeroVat ? ' · All source VAT values are £0.00' : '') + '</p>' +
       suggestion +
       '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id, "Select VAT treatment", sageTaxLabel) + '</label><button type="button" data-save-tax="' + escapeHtml(code) + '">Save VAT choice</button></div>' +
       result +
-      '</div>';
+      '</div></details>';
   }).join("");
 }
 
@@ -3453,15 +3572,19 @@ function renderLedgerMappings() {
   ledgerMappingBody.innerHTML = entries.map((entry) => {
     const saved = sageReferences.ledger_mappings.find((mapping) => mapping.source_code === entry.source_code && mapping.source_context === entry.source_context);
     const usage = ledgerCodeUsage(entry.source_code, entry.source_context);
+    const savedAvailable = saved && referenceIsAvailable(saved, options);
     const result = saved
-      ? '<div class="conversion-result"><div><span>' + escapeHtml(entry.source_code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Change</button></div>'
+      ? '<div class="conversion-result"><div><span>' + escapeHtml(entry.source_code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Change</button></div>' + (savedAvailable ? "" : '<p class="conversion-unavailable">This saved Sage option is no longer available. Please choose a replacement.</p>')
       : "";
-    return '<div class="conversion-card">' +
+    const summary = saved && savedAvailable
+      ? escapeHtml(entry.source_code + " → " + saved.sage_display_name) + '<span>Configured · ' + usage.count + ' transaction' + plural(usage.count) + '</span>'
+      : escapeHtml(entry.source_code) + '<span>Not configured · ' + usage.count + ' transaction' + plural(usage.count) + ' · ' + formatSterling(usage.total) + '</span>';
+    return '<details class="conversion-card"' + (saved && savedAvailable ? "" : " open") + '><summary><strong>' + summary + '</strong></summary><div class="conversion-card-content">' +
       '<div class="conversion-source"><div><span>Source nominal code</span><strong>' + escapeHtml(entry.source_code) + '</strong></div><div><span>Used for</span><strong>' + escapeHtml(formatTransactionType(entry.source_context)) + '</strong></div></div>' +
       '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Total value: ' + formatSterling(usage.total) + '<br>Example: ' + escapeHtml(usage.example) + '</p>' +
       '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("ledger-" + slug(entry.source_context + "-" + entry.source_code), options, saved?.sage_entity_id, "Select sales or ledger category", sageLedgerLabel) + referenceSearchInput("ledger-" + slug(entry.source_context + "-" + entry.source_code), "Search by category code or name") + '</label><button type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Save category choice</button></div>' +
       result +
-      '</div>';
+      '</div></details>';
   }).join("");
 }
 
@@ -3469,7 +3592,7 @@ function renderCustomerMappings() {
   const customers = uniqueCustomers();
 
   if (customers.length === 0) {
-    customerMappingBody.innerHTML = '<p class="empty-state">No customers found in the reviewed rows yet.</p>';
+    customerMappingBody.innerHTML = '<p class="empty-state">No customer matches are needed for the currently reviewed rows.<br><small>Customers will appear here after invoice rows have been reviewed and approved.</small></p>';
     return;
   }
 
@@ -3721,15 +3844,30 @@ function renderConversionSetupSummary() {
   const taxCodes = distinctBy(reviewRows.map((row) => row.tax_code).filter(Boolean));
   const ledgerEntries = distinctLedgerEntries();
   const customers = uniqueCustomers();
-  const taxOutstanding = taxCodes.filter((code) => !sageReferences.tax_mappings.some((mapping) => mapping.source_code === code && mapping.manually_confirmed)).length;
-  const ledgerOutstanding = ledgerEntries.filter((entry) => !sageReferences.ledger_mappings.some((mapping) => mapping.source_code === entry.source_code && mapping.source_context === entry.source_context && mapping.manually_confirmed)).length;
+  const taxOutstanding = taxCodes.filter((code) => {
+    const mapping = sageReferences.tax_mappings.find((item) => item.source_code === code && item.manually_confirmed);
+    return !mapping || !referenceIsAvailable(mapping, sageReferences.active_tax_rates || []);
+  }).length;
+  const ledgerOutstanding = ledgerEntries.filter((entry) => {
+    const mapping = sageReferences.ledger_mappings.find((item) => item.source_code === entry.source_code && item.source_context === entry.source_context && item.manually_confirmed);
+    return !mapping || !referenceIsAvailable(mapping, sageReferences.active_ledger_accounts || []);
+  }).length;
   const customersOutstanding = customers.filter((customer) => !sageReferences.customer_mappings.some((mapping) => mapping.normalized_customer_name === customer.normalized && mapping.manually_confirmed)).length;
   const complete = reviewRows.length > 0 && taxOutstanding === 0 && ledgerOutstanding === 0 && customersOutstanding === 0;
 
   conversionSetupSummary.className = "conversion-summary" + (complete ? " complete" : "");
   conversionSetupSummary.innerHTML = complete
-    ? '<strong>Conversion setup complete</strong><span>All required Sage options have been selected.</span>'
-    : '<strong>Conversion setup</strong><span>' + taxOutstanding + ' VAT code' + plural(taxOutstanding) + ' need' + (taxOutstanding === 1 ? "s" : "") + ' reviewing</span><span>' + ledgerOutstanding + ' nominal code' + plural(ledgerOutstanding) + ' need' + (ledgerOutstanding === 1 ? "s" : "") + ' reviewing</span><span>' + customersOutstanding + ' customer match' + plural(customersOutstanding) + ' outstanding</span>';
+    ? '<strong>Ready to continue</strong><span>All required Sage conversion choices have been saved.</span>'
+    : '<strong>Before continuing</strong>' +
+      taxCodes.filter((code) => {
+        const mapping = sageReferences.tax_mappings.find((item) => item.source_code === code && item.manually_confirmed);
+        return !mapping || !referenceIsAvailable(mapping, sageReferences.active_tax_rates || []);
+      }).map((code) => '<span>Choose a VAT treatment for ' + escapeHtml(code) + '</span>').join("") +
+      ledgerEntries.filter((entry) => {
+        const mapping = sageReferences.ledger_mappings.find((item) => item.source_code === entry.source_code && item.source_context === entry.source_context && item.manually_confirmed);
+        return !mapping || !referenceIsAvailable(mapping, sageReferences.active_ledger_accounts || []);
+      }).map((entry) => '<span>Choose a Sage category for ' + escapeHtml(entry.source_code) + '</span>').join("") +
+      (customersOutstanding > 0 ? '<span>' + customersOutstanding + ' customer match' + plural(customersOutstanding) + ' outstanding</span>' : "");
 }
 
 function taxCodeUsage(code) {
@@ -3758,6 +3896,10 @@ function taxSuggestion(code, entries) {
     return null;
   }
   return entries.find((entry) => sageTaxLabel(entry).toLowerCase().includes("no vat")) || null;
+}
+
+function referenceIsAvailable(mapping, entries) {
+  return entries.some((entry) => entry.sage_entity_id === mapping.sage_entity_id);
 }
 
 function sageTaxLabel(entry) {

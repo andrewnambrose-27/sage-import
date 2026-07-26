@@ -87,6 +87,7 @@ function contextWithContact(): ReadinessContext {
   return {
     ...emptyContext(),
     customerMappings: [{
+      sage_business_id: "business-1",
       normalized_customer_name: "acme ltd",
       customer_email: null,
       postcode: null,
@@ -101,6 +102,7 @@ function contextWithContactAndTax(): ReadinessContext {
   return {
     ...contextWithContact(),
     taxMappings: [{
+      sage_business_id: "business-1",
       mapping_type: "tax_rate",
       source_code: "T1",
       source_context: "",
@@ -115,6 +117,7 @@ function fullContext(): ReadinessContext {
   return {
     ...contextWithContactAndTax(),
     ledgerMappings: [{
+      sage_business_id: "business-1",
       mapping_type: "ledger_account",
       source_code: "4010",
       source_context: "removal",
