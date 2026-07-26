@@ -11,7 +11,6 @@ import {
   exchangeAuthorizationCode,
   expiryFromNow,
   formatSageBusinessHeader,
-  fetchSageContacts,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
   searchSageContacts,
@@ -266,25 +265,6 @@ describe("placeholder Sage customers", () => {
 });
 
 describe("Sage contact search", () => {
-  it("loads the complete contact collection through the reference reader", async () => {
-    const store = new MemorySageStore(connectionRecord());
-    await store.replaceTokens("access-token", "refresh-token");
-    const fetcher = vi.fn(async () => jsonResponse([
-      { id: "contact-1", displayed_as: "Charlotte Walker" },
-      { id: "contact-2", displayed_as: "TEST" },
-    ])) as unknown as typeof fetch;
-
-    await expect(fetchSageContacts(new SageApiClient(store, config, fetcher))).resolves.toMatchObject({
-      items: [
-        { id: "contact-1", displayed_as: "Charlotte Walker" },
-        { id: "contact-2", displayed_as: "TEST" },
-      ],
-    });
-    const requestUrl = String(vi.mocked(fetcher).mock.calls[0][0]);
-    expect(requestUrl).toContain("/contacts?");
-    expect(requestUrl).toContain("attributes=all");
-  });
-
   it("accepts the direct-array response returned by Sage contacts", async () => {
     const store = new MemorySageStore(connectionRecord());
     await store.replaceTokens("access-token", "refresh-token");
@@ -295,7 +275,9 @@ describe("Sage contact search", () => {
     await expect(searchSageContacts(new SageApiClient(store, config, fetcher), "Charlotte Walker")).resolves.toEqual({
       $items: [{ id: "contact-1", displayed_as: "Charlotte Walker" }],
     });
-    expect(String(vi.mocked(fetcher).mock.calls[0][0])).toContain("contact_type_id=CUSTOMER");
+    const requestUrl = String(vi.mocked(fetcher).mock.calls[0][0]);
+    expect(requestUrl).toContain("contact_type_id=CUSTOMER");
+    expect(requestUrl).toContain("search=Charlotte+Walker");
   });
 });
 
