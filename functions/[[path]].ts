@@ -55,7 +55,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-13";
+const APP_ASSET_VERSION = "20260726-14";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -281,6 +281,17 @@ async function handleImportBatchSave(request: Request, env: Env): Promise<Respon
     });
   } catch (error) {
     if (error instanceof DuplicateSourceInvoiceError) {
+      const existing = await database.findPreviouslySavedInvoices(rows);
+      if (existing.length === rows.length) {
+        return jsonResponse({
+          ok: true,
+          already_saved: true,
+          import_batch_id: existing[0]?.import_batch_id,
+          invoice_count: existing.length,
+          source_invoice_ids: existing.map((invoice) => invoice.id),
+          duplicate_blocked: false,
+        });
+      }
       return jsonResponse({
         ok: false,
         duplicate_blocked: true,
@@ -3159,7 +3170,7 @@ saveBatchButton.addEventListener("click", async () => {
       return;
     }
 
-    renderReviewSaveNotice("success", "Saved reviewed batch " + result.import_batch_id + " with " + result.invoice_count + " transaction" + plural(result.invoice_count) + ".");
+    renderReviewSaveNotice("success", (result.already_saved ? "Reconnected to saved reviewed batch " : "Saved reviewed batch ") + result.import_batch_id + " with " + result.invoice_count + " transaction" + plural(result.invoice_count) + ".");
     if (Array.isArray(result.source_invoice_ids) && result.source_invoice_ids.length === reviewRows.length) {
       for (let index = 0; index < reviewRows.length; index += 1) {
         reviewRows[index].source_invoice_id = result.source_invoice_ids[index];

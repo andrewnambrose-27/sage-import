@@ -335,6 +335,19 @@ export class ImportDatabase {
     return (await this.db.prepare("SELECT * FROM source_invoices WHERE id = ?").bind(id).first<SourceInvoiceRecord>()) ?? null;
   }
 
+  async findPreviouslySavedInvoices(rows: PersistableSourceInvoice[]): Promise<SourceInvoiceRecord[]> {
+    const candidates = await Promise.all(rows.map((row) => buildSourceInvoiceRecord(row, "", "")));
+    const hashes = candidates.map((candidate) => candidate.source_hash);
+    if (hashes.length === 0) return [];
+
+    const placeholders = hashes.map(() => "?").join(",");
+    const result = await this.db.prepare(
+      `SELECT * FROM source_invoices WHERE source_hash IN (${placeholders})`,
+    ).bind(...hashes).all<SourceInvoiceRecord>();
+    const byHash = new Map((result.results ?? []).map((invoice) => [invoice.source_hash, invoice]));
+    return hashes.map((hash) => byHash.get(hash)).filter((invoice): invoice is SourceInvoiceRecord => Boolean(invoice));
+  }
+
   async listInvoiceLinesForSourceInvoice(sourceInvoiceId: string): Promise<SourceInvoiceRecord[]> {
     const anchor = await this.getSourceInvoice(sourceInvoiceId);
     if (!anchor || !anchor.rm_invoice_number) {
