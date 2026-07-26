@@ -203,7 +203,7 @@ export async function exchangeAuthorizationCode(
   code: string,
   fetcher: typeof fetch = fetch,
 ): Promise<SageTokenResponse> {
-  const response = await fetcher(sageOAuthEndpoints.tokenUrl, {
+  const response = await invokeFetch(fetcher, sageOAuthEndpoints.tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({
@@ -223,7 +223,7 @@ export async function exchangeAuthorizationCode(
 }
 
 export async function fetchConnectedBusiness(accessToken: string, fetcher: typeof fetch = fetch): Promise<SageBusiness> {
-  const response = await fetcher(`${sageOAuthEndpoints.apiBaseUrl}/businesses`, {
+  const response = await invokeFetch(fetcher, `${sageOAuthEndpoints.apiBaseUrl}/businesses`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -444,7 +444,7 @@ export class SageApiClient {
 
     return {
       connection: current,
-      response: await this.fetcher(`${sageOAuthEndpoints.apiBaseUrl}${path}`, {
+      response: await invokeFetch(this.fetcher, `${sageOAuthEndpoints.apiBaseUrl}${path}`, {
         ...init,
         headers,
       }),
@@ -453,7 +453,7 @@ export class SageApiClient {
 
   private async refreshConnection(connection: SageConnectionRecord): Promise<SageConnectionRecord> {
     const { refreshToken } = await decryptTokenPair(connection, this.config.tokenEncryptionKey);
-    const response = await this.fetcher(sageOAuthEndpoints.tokenUrl, {
+    const response = await invokeFetch(this.fetcher, sageOAuthEndpoints.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formBody({
@@ -645,6 +645,10 @@ function formBody(values: Record<string, string>): URLSearchParams {
     body.set(key, value);
   }
   return body;
+}
+
+function invokeFetch(fetcher: typeof fetch, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetcher.call(globalThis, input, init);
 }
 
 export function extractSageItems(data: unknown, resourceName: string): Record<string, unknown>[] {

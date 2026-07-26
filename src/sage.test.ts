@@ -158,6 +158,17 @@ describe("SageApiClient", () => {
     expect(requestHeaders.get("X-Business")).toBe("business-1");
   });
 
+  it("calls injected fetch with the global context required by Workers", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(function (this: unknown) {
+      expect(this).toBe(globalThis);
+      return jsonResponse([]);
+    }) as unknown as typeof fetch;
+
+    await fetchSageTaxRates(new SageApiClient(store, config, fetcher));
+  });
+
   it("rejects an unexpected reference response shape instead of returning an empty list", async () => {
     const store = new MemorySageStore(connectionRecord());
     await store.replaceTokens("access-token", "refresh-token");
