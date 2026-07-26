@@ -51,7 +51,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-2";
+const APP_ASSET_VERSION = "20260726-3";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1352,7 +1352,7 @@ function uploadPage(): string {
           <div class="section-heading">
             <div>
               <h2 id="upload-title">File upload</h2>
-              <p>Each file is optional for now. Add whichever Removals Manager exports you can get, then check the files before moving on.</p>
+              <p>Start with the main removal invoices CSV. Add deposits, ad hoc invoices, credit notes and PDFs where you have them, then check the files before moving on.</p>
             </div>
             <div class="button-row">
               <button id="checkButton" type="button">Check files</button>
@@ -1366,8 +1366,11 @@ function uploadPage(): string {
                 <h3>Removal invoices CSV</h3>
                 <p>Use the main removals invoice export from Removals Manager.</p>
               </div>
-              <div class="file-card-actions">
-                <label for="removalInvoices">Choose CSV or drop here</label>
+              <div class="file-dropzone">
+                <span class="drop-icon" aria-hidden="true">+</span>
+                <strong>Drop your CSV here</strong>
+                <span>or choose it from your computer</span>
+                <label for="removalInvoices">Choose CSV</label>
                 <button class="file-remove-button" type="button" data-remove-file="removalInvoices" hidden>Remove file</button>
               </div>
               <input id="removalInvoices" type="file" accept=".csv,text/csv">
@@ -1379,8 +1382,11 @@ function uploadPage(): string {
                 <h3>Removal deposits CSV</h3>
                 <p>Use this if deposits are exported separately from invoices.</p>
               </div>
-              <div class="file-card-actions">
-                <label for="removalDeposits">Choose CSV or drop here</label>
+              <div class="file-dropzone">
+                <span class="drop-icon" aria-hidden="true">+</span>
+                <strong>Drop your CSV here</strong>
+                <span>or choose it from your computer</span>
+                <label for="removalDeposits">Choose CSV</label>
                 <button class="file-remove-button" type="button" data-remove-file="removalDeposits" hidden>Remove file</button>
               </div>
               <input id="removalDeposits" type="file" accept=".csv,text/csv">
@@ -1392,8 +1398,11 @@ function uploadPage(): string {
                 <h3>Ad Hoc invoices CSV</h3>
                 <p>Use the ad hoc invoice export if Removals Manager provides one.</p>
               </div>
-              <div class="file-card-actions">
-                <label for="adHocInvoices">Choose CSV or drop here</label>
+              <div class="file-dropzone">
+                <span class="drop-icon" aria-hidden="true">+</span>
+                <strong>Drop your CSV here</strong>
+                <span>or choose it from your computer</span>
+                <label for="adHocInvoices">Choose CSV</label>
                 <button class="file-remove-button" type="button" data-remove-file="adHocInvoices" hidden>Remove file</button>
               </div>
               <input id="adHocInvoices" type="file" accept=".csv,text/csv">
@@ -1405,8 +1414,11 @@ function uploadPage(): string {
                 <h3>Credit notes CSV</h3>
                 <p>Add credit notes here if Removals Manager can export them.</p>
               </div>
-              <div class="file-card-actions">
-                <label for="creditNotes">Choose CSV or drop here</label>
+              <div class="file-dropzone">
+                <span class="drop-icon" aria-hidden="true">+</span>
+                <strong>Drop your CSV here</strong>
+                <span>or choose it from your computer</span>
+                <label for="creditNotes">Choose CSV</label>
                 <button class="file-remove-button" type="button" data-remove-file="creditNotes" hidden>Remove file</button>
               </div>
               <input id="creditNotes" type="file" accept=".csv,text/csv">
@@ -1418,8 +1430,11 @@ function uploadPage(): string {
                 <h3>Monthly invoice report PDF</h3>
                 <p>Add the monthly invoice report PDF if it is available for checking later.</p>
               </div>
-              <div class="file-card-actions">
-                <label for="monthlyReport">Choose PDF or drop here</label>
+              <div class="file-dropzone">
+                <span class="drop-icon" aria-hidden="true">+</span>
+                <strong>Drop your PDF here</strong>
+                <span>or choose it from your computer</span>
+                <label for="monthlyReport">Choose PDF</label>
                 <button class="file-remove-button" type="button" data-remove-file="monthlyReport" hidden>Remove file</button>
               </div>
               <input id="monthlyReport" type="file" accept=".pdf,application/pdf">
@@ -1431,8 +1446,11 @@ function uploadPage(): string {
                 <h3>Individual invoice PDFs</h3>
                 <p>Add a batch of invoice PDFs if you have them. Multiple files are allowed.</p>
               </div>
-              <div class="file-card-actions">
-                <label for="invoicePdfs">Choose PDFs or drop here</label>
+              <div class="file-dropzone">
+                <span class="drop-icon" aria-hidden="true">+</span>
+                <strong>Drop your PDFs here</strong>
+                <span>or choose them from your computer</span>
+                <label for="invoicePdfs">Choose PDFs</label>
                 <button class="file-remove-button" type="button" data-remove-file="invoicePdfs" hidden>Remove files</button>
               </div>
               <input id="invoicePdfs" type="file" accept=".pdf,application/pdf" multiple>
@@ -1956,11 +1974,10 @@ h2 {
 }
 
 .file-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  min-height: 158px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 272px;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1972,6 +1989,11 @@ h2 {
   border-color: var(--sage);
   background: #edf8f5;
   box-shadow: inset 0 0 0 1px var(--sage);
+}
+
+.file-card.is-dragging .file-dropzone {
+  border-color: var(--sage);
+  background: #e4f4ef;
 }
 
 .file-card h3 {
@@ -2001,10 +2023,37 @@ h2 {
   background: var(--sage-dark);
 }
 
-.file-card-actions {
+.file-dropzone {
   display: grid;
-  justify-items: stretch;
-  gap: 8px;
+  min-height: 144px;
+  padding: 16px;
+  border: 1px dashed #8daea6;
+  border-radius: 8px;
+  background: #ffffff;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.file-dropzone strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.drop-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  place-items: center;
+  background: #dcefe9;
+  color: var(--sage-dark);
+  font-size: 1.7rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .file-remove-button {
@@ -3706,8 +3755,10 @@ function datePlusDays(value, days) {
 }
 
 async function loadSageStatus() {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8_000);
   try {
-    const response = await fetch("/api/sage/status");
+    const response = await fetch("/api/sage/status", { signal: controller.signal });
     const status = await response.json();
 
     if (!response.ok) {
@@ -3736,9 +3787,13 @@ async function loadSageStatus() {
     sageConnectLink.textContent = "Connect Sage";
     sageDisconnectButton.disabled = true;
   } catch (error) {
-    sageStatusText.textContent = "Sage status could not be loaded.";
+    sageStatusText.textContent = error.name === "AbortError"
+      ? "Sage connection status is taking too long to load. Refresh the page to try again."
+      : "Sage status could not be loaded.";
     sageDisconnectButton.disabled = true;
     console.error(error);
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
