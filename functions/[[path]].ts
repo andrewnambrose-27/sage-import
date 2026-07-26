@@ -7,6 +7,7 @@ import {
   D1SageConnectionStore,
   SageApiClient,
   SageAuthorizationError,
+  SageBusinessLookupError,
   SageTokenExchangeError,
   createSageAuthorizationUrl,
   encryptTokenPair,
@@ -306,13 +307,13 @@ async function handleSageCallback(request: Request, env: Env): Promise<Response>
   const secure = url.protocol === "https:";
 
   if (!config.ok) {
-    return jsonResponse({ ok: false, error: config.error }, 503, {
+    return sageCallbackRedirect("configuration_failed", {
       "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
     });
   }
 
   if (!env.DB) {
-    return jsonResponse({ ok: false, error: "D1 database is not configured yet." }, 503, {
+    return sageCallbackRedirect("storage_failed", {
       "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
     });
   }
@@ -322,7 +323,7 @@ async function handleSageCallback(request: Request, env: Env): Promise<Response>
   const code = url.searchParams.get("code");
   const validation = validateOAuthCallbackInput(expectedState, returnedState, code, constantTimeEqual);
   if (!validation.ok) {
-    return jsonResponse({ ok: false, error: validation.error }, validation.status, {
+    return sageCallbackRedirect("authorization_failed", {
       "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
     });
   }
@@ -344,13 +345,19 @@ async function handleSageCallback(request: Request, env: Env): Promise<Response>
     });
   } catch (error) {
     if (error instanceof SageTokenExchangeError) {
-      return jsonResponse({ ok: false, error: "Sage token exchange failed." }, 502, {
+      return sageCallbackRedirect("token_exchange_failed", {
+        "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
+      });
+    }
+
+    if (error instanceof SageBusinessLookupError) {
+      return sageCallbackRedirect("business_lookup_failed", {
         "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
       });
     }
 
     console.error("Sage OAuth callback failed", safeError(error));
-    return jsonResponse({ ok: false, error: "Sage could not be connected." }, 502, {
+    return sageCallbackRedirect("connection_failed", {
       "Set-Cookie": clearCookie(SAGE_OAUTH_STATE_COOKIE, secure),
     });
   }
@@ -1151,6 +1158,10 @@ function redirect(location: string, headers: Record<string, string> = {}): Respo
       ...headers,
     },
   });
+}
+
+function sageCallbackRedirect(result: string, headers: Record<string, string>): Response {
+  return redirect(`/upload?sage=${encodeURIComponent(result)}`, headers);
 }
 
 function htmlResponse(body: string, status = 200): Response {
@@ -3633,7 +3644,7 @@ async function loadSageStatus() {
       return;
     }
 
-    sageStatusText.textContent = "Sage is not connected.";
+    sageStatusText.textContent = sageConnectionOutcome() || "Sage is not connected.";
     sageConnectLink.textContent = "Connect Sage";
     sageDisconnectButton.disabled = true;
   } catch (error) {
@@ -3641,6 +3652,24 @@ async function loadSageStatus() {
     sageDisconnectButton.disabled = true;
     console.error(error);
   }
+}
+
+function sageConnectionOutcome() {
+  const result = new URLSearchParams(window.location.search).get("sage");
+  const messages = {
+    connected: "Sage connected successfully.",
+    authorization_failed: "Sage did not return a valid authorization response. Start the connection again from this page.",
+    token_exchange_failed: "Sage returned to the app, but did not issue usable access tokens. Check the client credentials, then try again.",
+    business_lookup_failed: "Sage authorized the app, but its Accounting service could not return the business details. Please try again shortly.",
+    storage_failed: "Sage authorized the app, but the connection could not be stored. Check the D1 binding and try again.",
+    configuration_failed: "The Sage connection settings are incomplete in this deployment.",
+    connection_failed: "Sage returned to the app, but the connection could not be completed. Please try again shortly.",
+  };
+  const message = messages[result];
+  if (message) {
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+  return message || "";
 }
 
 function inferReportingMonth(rows) {
