@@ -56,7 +56,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-15";
+const APP_ASSET_VERSION = "20260726-16";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -3846,7 +3846,8 @@ function renderCustomerMappings() {
     const contactOptions = (customer.matches || []).map((match) =>
       '<option value="' + escapeHtml(match.sage_contact_id) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
     ).join("");
-    const select = customer.matches
+    const hasMatches = Array.isArray(customer.matches) && customer.matches.length > 0;
+    const select = hasMatches
       ? '<select id="contact-' + slug(customer.normalized) + '">' + contactOptions + '</select>'
       : '<select id="contact-' + slug(customer.normalized) + '" disabled><option>Search Sage first</option></select>';
     const matchText = customer.match_status === "ambiguous"
@@ -3860,7 +3861,7 @@ function renderCustomerMappings() {
       select +
       '<div class="contact-actions">' +
         '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Refresh and search</button>' +
-        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (customer.matches ? "" : " disabled") + '>Save contact</button>' +
+        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' +
       '</div>' +
       '</div>';
   }).join("");
@@ -3960,28 +3961,38 @@ async function searchContact(normalizedCustomerName) {
     return;
   }
 
-  const response = await fetch("/api/sage/contacts/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      customer_name: normalizedCustomerName === "__unnamed_customer__" ? "" : customer.name,
-      normalized_customer_name: customer.normalized,
-    }),
-  });
-  const result = await response.json();
-  if (!response.ok || !result.ok) {
-    renderMappingNotice("error", result.error || "Sage contacts could not be searched.");
-    return;
+  const button = customerMappingBody.querySelector('[data-search-contact="' + cssEscape(normalizedCustomerName) + '"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Searching Sage...";
   }
-
-  customer.contact_search = result;
-  for (const row of reviewRows) {
-    if ((normalizedCustomerName === "__unnamed_customer__" && !row.customer_name) || normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
-      row.contact_search = result;
+  try {
+    const response = await fetch("/api/sage/contacts/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customer_name: normalizedCustomerName === "__unnamed_customer__" ? "" : customer.name,
+        normalized_customer_name: customer.normalized,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      renderMappingNotice("error", result.error || "Sage contacts could not be searched.");
+      return;
     }
+
+    customer.contact_search = result;
+    for (const row of reviewRows) {
+      if ((normalizedCustomerName === "__unnamed_customer__" && !row.customer_name) || normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
+        row.contact_search = result;
+      }
+    }
+    renderMappingNotice(result.match_status === "none" ? "error" : "success", result.missing_contact_message || "Contact search complete. Confirm the correct match manually.");
+    renderCustomerMappings();
+  } catch (error) {
+    renderMappingNotice("error", "Sage contacts could not be searched. Try reconnecting Sage if this continues.");
+    console.error(error);
   }
-  renderMappingNotice(result.match_status === "none" ? "error" : "success", result.missing_contact_message || "Contact search complete. Confirm the correct match manually.");
-  renderCustomerMappings();
 }
 
 async function saveCustomerMapping(normalizedCustomerName) {
