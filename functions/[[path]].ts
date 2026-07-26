@@ -584,6 +584,10 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
     ].map((match) => [match.sage_contact_id, match]));
     const matches = [...matchesById.values()];
     const normalized = normalizedCustomerName || normalizeForClient(customerName);
+    console.log("Sage contact search completed", {
+      mode: isUnnamedCustomerSelection ? "all_contacts" : "named_search",
+      returnedContacts: matches.length,
+    });
 
     return jsonResponse({
       ok: true,
@@ -592,7 +596,9 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
       matches,
       match_status: contactMatchStatus(normalized, matches),
       saved_mapping: savedMappings.find((mapping) => mapping.normalized_customer_name === normalized) ?? null,
-      missing_contact_message: matches.length === 0 ? "Create or complete this customer in Sage, then refresh contacts." : null,
+      missing_contact_message: matches.length === 0
+        ? "Sage returned no contacts. Check the connected Sage business, then try again."
+        : `Sage returned ${matches.length} contact${matches.length === 1 ? "" : "s"}. Choose the confirmed contact manually.`,
     });
   } catch (error) {
     if (error instanceof SageAuthorizationError) {
