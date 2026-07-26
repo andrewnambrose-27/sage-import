@@ -528,7 +528,8 @@ export function normalizeSageLedgerAccount(item: Record<string, unknown>): SageL
 
 export async function searchSageContacts(client: SageApiClient, search: string): Promise<unknown> {
   const params = new URLSearchParams();
-  params.set("search", search);
+  if (search.trim()) params.set("search", search);
+  params.set("items_per_page", "200");
   const response = await client.request(`${sageReadOnlyPaths.contacts}?${params.toString()}`);
   if (!response.ok) {
     throw new SageBusinessLookupError("Sage contacts could not be searched.");

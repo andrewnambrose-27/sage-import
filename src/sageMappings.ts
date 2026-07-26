@@ -67,6 +67,8 @@ export interface ReadinessContext {
   importedSourceInvoiceIds: Set<string>;
 }
 
+export const unnamedCustomerMappingKey = "__unnamed_customer__";
+
 export function parseSageReferenceItems(data: unknown, referenceType: SageReferenceType): SageReferenceEntry[] {
   return extractItems(data, `Sage ${referenceType === "tax_rate" ? "tax rates" : "ledger accounts"}`).map((item) => {
     const id = stringValue(item, "id");
@@ -143,7 +145,7 @@ export function readinessForInvoice(row: ReadinessInput, context: ReadinessConte
     return "blocked_by_warning";
   }
 
-  const normalizedCustomerName = row.customer_name ? normalizeCustomerName(row.customer_name) : "";
+  const normalizedCustomerName = row.customer_name ? normalizeCustomerName(row.customer_name) : unnamedCustomerMappingKey;
   const customerMapping = context.customerMappings.find((mapping) =>
     mapping.manually_confirmed &&
     mapping.normalized_customer_name === normalizedCustomerName

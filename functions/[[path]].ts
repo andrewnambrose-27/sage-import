@@ -37,6 +37,7 @@ import {
   parseSageContactItems,
   parseSageReferenceItems,
   readinessForInvoice,
+  unnamedCustomerMappingKey,
   type SageReferenceType,
   type ReadinessInput,
 } from "../src/sageMappings";
@@ -55,7 +56,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-14";
+const APP_ASSET_VERSION = "20260726-15";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -564,16 +565,17 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
   const body = await request.json() as { customer_name?: string; normalized_customer_name?: string };
   const customerName = String(body.customer_name ?? "").trim();
   const normalizedCustomerName = String(body.normalized_customer_name ?? "").trim();
+  const isUnnamedCustomerSelection = normalizedCustomerName === unnamedCustomerMappingKey;
   const searchTerm = customerName || normalizedCustomerName;
 
-  if (!searchTerm) {
+  if (!searchTerm || (isUnnamedCustomerSelection && customerName)) {
     return jsonResponse({ ok: false, error: "Customer name is required." }, 400);
   }
 
   try {
     const [exactData, normalizedData, savedMappings] = await Promise.all([
-      searchSageContacts(client.value, customerName || normalizedCustomerName),
-      normalizedCustomerName && normalizedCustomerName !== customerName ? searchSageContacts(client.value, normalizedCustomerName) : Promise.resolve({ $items: [] }),
+      searchSageContacts(client.value, isUnnamedCustomerSelection ? "" : customerName || normalizedCustomerName),
+      !isUnnamedCustomerSelection && normalizedCustomerName && normalizedCustomerName !== customerName ? searchSageContacts(client.value, normalizedCustomerName) : Promise.resolve({ $items: [] }),
       database.value.listCustomerMappings((await activeSageBusinessId(env)) ?? ""),
     ]);
     const matchesById = new Map([
@@ -842,12 +844,12 @@ async function prepareSageDraftInvoice(
     }
   }
 
-  const customerNames = new Set(lines.map((line) => line.normalized_customer_name).filter(Boolean));
+  const customerNames = new Set(lines.map((line) => line.normalized_customer_name || unnamedCustomerMappingKey));
   if (customerNames.size !== 1) {
     return { ok: false, status: 400, error: "This invoice has inconsistent customer details and needs review." };
   }
   const customerMapping = customerMappings.find((mapping) =>
-    mapping.manually_confirmed && mapping.normalized_customer_name === anchor.normalized_customer_name,
+    mapping.manually_confirmed && mapping.normalized_customer_name === (anchor.normalized_customer_name || unnamedCustomerMappingKey),
   );
   if (!customerMapping) {
     return { ok: false, status: 400, error: "A confirmed Sage customer mapping is required." };
@@ -3956,7 +3958,7 @@ async function searchContact(normalizedCustomerName) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      customer_name: customer.name,
+      customer_name: normalizedCustomerName === "__unnamed_customer__" ? "" : customer.name,
       normalized_customer_name: customer.normalized,
     }),
   });
@@ -3968,7 +3970,7 @@ async function searchContact(normalizedCustomerName) {
 
   customer.contact_search = result;
   for (const row of reviewRows) {
-    if (normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
+    if ((normalizedCustomerName === "__unnamed_customer__" && !row.customer_name) || normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
       row.contact_search = result;
     }
   }
@@ -4070,6 +4072,16 @@ function uniqueCustomers() {
         missing_contact_message: search?.missing_contact_message,
       });
     }
+  }
+  const unnamedRows = reviewRows.filter((row) => !row.customer_name);
+  if (unnamedRows.length > 0) {
+    map.set("__unnamed_customer__", {
+      name: "Unnamed customer rows (" + unnamedRows.length + ")",
+      normalized: "__unnamed_customer__",
+      matches: unnamedRows[0]?.contact_search?.matches,
+      match_status: unnamedRows[0]?.contact_search?.match_status,
+      missing_contact_message: "These exports do not contain customer names. Select an existing Sage contact only if you have confirmed it is correct for these rows.",
+    });
   }
   return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
