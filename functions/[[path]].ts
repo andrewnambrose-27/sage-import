@@ -1365,7 +1365,7 @@ function uploadPage(): string {
                 <h3>Removal invoices CSV</h3>
                 <p>Use the main removals invoice export from Removals Manager.</p>
               </div>
-              <label for="removalInvoices">Choose CSV</label>
+              <label for="removalInvoices">Choose CSV or drop here</label>
               <input id="removalInvoices" type="file" accept=".csv,text/csv">
               <p class="field-message" id="removalInvoicesMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1375,7 +1375,7 @@ function uploadPage(): string {
                 <h3>Removal deposits CSV</h3>
                 <p>Use this if deposits are exported separately from invoices.</p>
               </div>
-              <label for="removalDeposits">Choose CSV</label>
+              <label for="removalDeposits">Choose CSV or drop here</label>
               <input id="removalDeposits" type="file" accept=".csv,text/csv">
               <p class="field-message" id="removalDepositsMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1385,7 +1385,7 @@ function uploadPage(): string {
                 <h3>Ad Hoc invoices CSV</h3>
                 <p>Use the ad hoc invoice export if Removals Manager provides one.</p>
               </div>
-              <label for="adHocInvoices">Choose CSV</label>
+              <label for="adHocInvoices">Choose CSV or drop here</label>
               <input id="adHocInvoices" type="file" accept=".csv,text/csv">
               <p class="field-message" id="adHocInvoicesMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1395,7 +1395,7 @@ function uploadPage(): string {
                 <h3>Credit notes CSV</h3>
                 <p>Add credit notes here if Removals Manager can export them.</p>
               </div>
-              <label for="creditNotes">Choose CSV</label>
+              <label for="creditNotes">Choose CSV or drop here</label>
               <input id="creditNotes" type="file" accept=".csv,text/csv">
               <p class="field-message" id="creditNotesMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1405,7 +1405,7 @@ function uploadPage(): string {
                 <h3>Monthly invoice report PDF</h3>
                 <p>Add the monthly invoice report PDF if it is available for checking later.</p>
               </div>
-              <label for="monthlyReport">Choose PDF</label>
+              <label for="monthlyReport">Choose PDF or drop here</label>
               <input id="monthlyReport" type="file" accept=".pdf,application/pdf">
               <p class="field-message" id="monthlyReportMessage">No file selected yet. This is optional.</p>
             </article>
@@ -1415,7 +1415,7 @@ function uploadPage(): string {
                 <h3>Individual invoice PDFs</h3>
                 <p>Add a batch of invoice PDFs if you have them. Multiple files are allowed.</p>
               </div>
-              <label for="invoicePdfs">Choose PDFs</label>
+              <label for="invoicePdfs">Choose PDFs or drop here</label>
               <input id="invoicePdfs" type="file" accept=".pdf,application/pdf" multiple>
               <p class="field-message" id="invoicePdfsMessage">No files selected yet. This is optional.</p>
             </article>
@@ -1946,6 +1946,13 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fbfa;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.file-card.is-dragging {
+  border-color: var(--sage);
+  background: #edf8f5;
+  box-shadow: inset 0 0 0 1px var(--sage);
 }
 
 .file-card h3 {
@@ -2501,6 +2508,35 @@ const uploadSlots = [
 for (const slot of uploadSlots) {
   const input = document.querySelector("#" + slot.id);
   input.addEventListener("change", () => updateFieldMessage(slot));
+
+  const card = input.closest(".file-card");
+  for (const eventName of ["dragenter", "dragover"]) {
+    card.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      card.classList.add("is-dragging");
+    });
+  }
+  for (const eventName of ["dragleave", "dragend"]) {
+    card.addEventListener(eventName, () => card.classList.remove("is-dragging"));
+  }
+  card.addEventListener("drop", (event) => {
+    event.preventDefault();
+    card.classList.remove("is-dragging");
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length === 0) {
+      return;
+    }
+    if (!slot.multiple && files.length > 1) {
+      setFieldMessage(slot.id, "Please drop one file into this box.", "error");
+      return;
+    }
+    const transfer = new DataTransfer();
+    for (const file of files) {
+      transfer.items.add(file);
+    }
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 loadSageStatus();
