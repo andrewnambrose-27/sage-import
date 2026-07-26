@@ -530,6 +530,10 @@ export async function fetchSageTaxRates(client: SageApiClient): Promise<SageRefe
   return fetchSageReferenceCollection(client, sageReadOnlyPaths.taxRates, "Sage tax rates");
 }
 
+export async function fetchSageContacts(client: SageApiClient): Promise<SageReferenceFetchResult> {
+  return fetchSageReferenceCollection(client, sageReadOnlyPaths.contacts, "Sage contacts");
+}
+
 export function normalizeSageTaxRate(item: Record<string, unknown>): SageTaxRateReference {
   const name = stringValue(item, "name") || stringValue(item, "displayed_as") || stringValue(item, "display_name");
   return {

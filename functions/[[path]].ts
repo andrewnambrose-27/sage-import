@@ -16,6 +16,7 @@ import {
   exchangeAuthorizationCode,
   expiryFromNow,
   fetchConnectedBusiness,
+  fetchSageContacts,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
   normalizeSageLedgerAccount,
@@ -26,7 +27,6 @@ import {
   SageDraftInvoiceRequestError,
   SageContactRequestError,
   SageUncertainResultError,
-  searchSageContacts,
   safeStatusFromConnection,
   validateOAuthCallbackInput,
   type SageConnectionConfig,
@@ -58,7 +58,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-21";
+const APP_ASSET_VERSION = "20260727-1";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -579,10 +579,11 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
   }
 
   try {
-    const [contactData, savedMappings] = await Promise.all([
-      searchSageContacts(client.value, ""),
+    const [contactResult, savedMappings] = await Promise.all([
+      fetchSageContacts(client.value),
       database.value.listCustomerMappings((await activeSageBusinessId(env)) ?? ""),
     ]);
+    const contactData = { $items: contactResult.items };
     const matchesById = new Map(parseSageContactItems(contactData).map((match) => [match.sage_contact_id, match]));
     const normalized = normalizedCustomerName || normalizeForClient(customerName);
     const matches = [...matchesById.values()].sort((left, right) => {
@@ -594,6 +595,8 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
     console.log("Sage contact search completed", {
       mode: isUnnamedCustomerSelection ? "all_contacts" : "named_search",
       returnedContacts: matches.length,
+      pages: contactResult.diagnostics.length,
+      lastStatus: contactResult.diagnostics.at(-1)?.status ?? null,
     });
 
     return jsonResponse({
@@ -2799,6 +2802,22 @@ table {
   font: inherit;
 }
 
+.contact-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.contact-picker input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
 .mapping-row button {
   min-height: 40px;
   padding: 0 12px;
@@ -3551,6 +3570,14 @@ customerMappingBody.addEventListener("click", async (event) => {
   }
 });
 
+customerMappingBody.addEventListener("input", (event) => {
+  const input = event.target instanceof Element ? event.target.closest("[data-filter-contact]") : null;
+  if (!input) {
+    return;
+  }
+  filterLoadedContacts(input.dataset.filterContact || "", input.value || "");
+});
+
 addMissingContactsButton.addEventListener("click", createAllMissingContacts);
 
 checkButton.addEventListener("click", async () => {
@@ -4078,11 +4105,11 @@ function renderCustomerMappings() {
     }
     const matches = [...(customer.matches || [])];
     const contactOptions = matches.map((match) =>
-      '<option value="' + escapeHtml(match.sage_contact_id) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
+      '<option value="' + escapeHtml(match.sage_contact_id) + '" data-contact-display-name="' + escapeHtml(match.sage_contact_display_name) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
     ).join("");
     const hasMatches = matches.length > 0;
     const select = hasMatches
-      ? '<select id="contact-' + slug(customer.normalized) + '">' + contactOptions + '</select>'
+      ? '<div class="contact-picker"><input type="search" data-filter-contact="' + escapeHtml(customer.normalized) + '" placeholder="Search loaded Sage contacts"><select id="contact-' + slug(customer.normalized) + '"><option value="">Choose Sage contact</option>' + contactOptions + '</select></div>'
       : '<select id="contact-' + slug(customer.normalized) + '" disabled><option>Search Sage first</option></select>';
     const matchText = customer.match_status === "ambiguous"
       ? '<small>Multiple possible matches. Please choose manually.</small>'
@@ -4216,22 +4243,23 @@ async function searchContact(normalizedCustomerName) {
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
-      renderMappingNotice("error", result.error || "Sage contacts could not be searched.");
+      const message = result.error || "Sage contacts could not be searched.";
+      rememberContactSearch(normalizedCustomerName, { matches: [], match_status: "none", missing_contact_message: message });
+      renderMappingNotice("error", message);
+      renderCustomerMappings();
       return;
     }
 
-    customer.contact_search = result;
-    for (const row of reviewRows) {
-      if ((normalizedCustomerName === "__unnamed_customer__" && !row.customer_name) || normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
-        row.contact_search = result;
-      }
-    }
+    rememberContactSearch(normalizedCustomerName, result);
     renderMappingNotice(result.matches?.length ? "success" : "error", result.missing_contact_message || "Sage contacts loaded. Confirm the correct match manually.");
     renderCustomerMappings();
   } catch (error) {
-    renderMappingNotice("error", error.name === "AbortError"
+    const message = error.name === "AbortError"
       ? "Sage contact search took too long. You can try again or create a customer with temporary TEST details."
-      : "Sage contacts could not be searched. Try reconnecting Sage if this continues.");
+      : "Sage contacts could not be searched. Try reconnecting Sage if this continues.";
+    rememberContactSearch(normalizedCustomerName, { matches: [], match_status: "none", missing_contact_message: message });
+    renderMappingNotice("error", message);
+    renderCustomerMappings();
     console.error(error);
   } finally {
     window.clearTimeout(timeout);
@@ -4239,6 +4267,33 @@ async function searchContact(normalizedCustomerName) {
       button.disabled = false;
       button.textContent = "Load Sage contacts";
     }
+  }
+}
+
+function rememberContactSearch(normalizedCustomerName, result) {
+  for (const row of reviewRows) {
+    if ((normalizedCustomerName === "__unnamed_customer__" && !row.customer_name) || normalizeCustomerNameClient(row.customer_name || "") === normalizedCustomerName) {
+      row.contact_search = result;
+    }
+  }
+}
+
+function filterLoadedContacts(normalizedCustomerName, searchText) {
+  const customer = uniqueCustomers().find((item) => item.normalized === normalizedCustomerName);
+  const select = customerMappingBody.querySelector("#contact-" + cssEscape(slug(normalizedCustomerName)));
+  if (!customer || !select) {
+    return;
+  }
+  const query = String(searchText || "").trim().toLowerCase();
+  const selectedId = select.value;
+  const matches = (customer.matches || []).filter((match) => !query || [match.sage_contact_display_name, match.email]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(query)));
+  select.innerHTML = '<option value="">Choose Sage contact</option>' + matches.map((match) =>
+    '<option value="' + escapeHtml(match.sage_contact_id) + '" data-contact-display-name="' + escapeHtml(match.sage_contact_display_name) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
+  ).join("");
+  if (matches.some((match) => match.sage_contact_id === selectedId)) {
+    select.value = selectedId;
   }
 }
 
@@ -4284,9 +4339,8 @@ async function createPlaceholderContact(normalizedCustomerName, options = {}) {
     }
     rememberCustomerMapping(customer, result);
     renderCustomerMappings();
-    void refreshSageReadiness();
     if (!options.deferRefresh) {
-      await loadSageReferences();
+      await refreshSageReadiness();
     }
     return true;
   } catch (error) {
@@ -4348,7 +4402,7 @@ async function createAllMissingContacts() {
     added += 1;
   }
 
-  await loadSageReferences();
+  await refreshSageReadiness();
   if (added === missingCustomers.length) {
     renderMappingNotice("success", added + " contact" + plural(added) + " added and saved. Complete their TEST details in Sage before sending invoices.");
   } else {
@@ -4379,8 +4433,17 @@ async function saveCustomerMapping(normalizedCustomerName) {
     return;
   }
 
-  renderMappingNotice("success", "Customer mapping saved.");
-  await loadSageReferences();
+  const customer = uniqueCustomers().find((item) => item.normalized === normalizedCustomerName);
+  if (customer) {
+    rememberCustomerMapping(customer, {
+      sage_contact_id: select.value,
+      sage_contact_display_name: option.dataset.contactDisplayName || option.textContent,
+      needs_completion: false,
+    });
+  }
+  renderMappingNotice("success", "Customer mapping saved. This contact will be reused for future imports.");
+  renderCustomerMappings();
+  await refreshSageReadiness();
 }
 
 async function refreshSageReadiness() {
