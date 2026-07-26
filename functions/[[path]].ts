@@ -51,7 +51,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-5";
+const APP_ASSET_VERSION = "20260726-6";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1588,25 +1588,27 @@ function uploadPage(): string {
         <section class="results-panel mapping-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">4</span><h2>Map to Sage</h2></div>
-              <p id="mappingIntro">Map Removals Manager tax codes, nominal codes and customers to existing Sage records before any future Sage export.</p>
+              <div class="step-title"><span class="step-badge">4</span><h2>Set up Sage conversion</h2></div>
+              <p id="mappingIntro">Your uploaded files contain Sage 50 tax and nominal codes. Choose the equivalent Sage Accounting options below. These choices will be saved and reused for future imports.</p>
             </div>
             <div class="button-row">
-              <button id="refreshSageReferencesButton" class="secondary-button" type="button">Refresh Sage references</button>
+              <button id="refreshSageReferencesButton" class="secondary-button" type="button">Refresh Sage options</button>
+              <small class="button-helper">Use this after changing Sage VAT settings or categories.</small>
             </div>
           </div>
           <div id="mappingNotice" class="notice"></div>
+          <div id="conversionSetupSummary" class="conversion-summary"></div>
           <div class="mapping-grid">
             <article>
-              <h3>Tax mappings</h3>
-              <p>Do not assume an old Removals Manager tax code matches a Sage tax rate. Choose and save each one.</p>
+              <h3>VAT conversion</h3>
+              <p>Choose how each tax code from the Sage 50 export should be treated in Sage Accounting.</p>
               <div id="taxMappingBody" class="mapping-list">
                 <p class="empty-state">No uploaded tax codes yet.</p>
               </div>
             </article>
             <article>
-              <h3>Ledger mappings</h3>
-              <p>Map each nominal code separately for removals, deposits, ad hoc invoices and credit notes.</p>
+              <h3>Nominal code conversion</h3>
+              <p>Choose which Sage Accounting category should be used for each nominal code in the Sage 50 export.</p>
               <div id="ledgerMappingBody" class="mapping-list">
                 <p class="empty-state">No uploaded nominal codes yet.</p>
               </div>
@@ -2277,6 +2279,115 @@ table {
   margin: 0 0 8px;
 }
 
+.button-helper {
+  max-width: 220px;
+  color: var(--muted);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.conversion-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e1bc72;
+  border-radius: 8px;
+  background: #fffaf0;
+  color: #6d521f;
+}
+
+.conversion-summary strong {
+  color: var(--ink);
+}
+
+.conversion-summary.complete {
+  border-color: rgba(15, 107, 91, 0.28);
+  background: #eff9f5;
+  color: var(--sage-dark);
+}
+
+.conversion-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.conversion-card h4,
+.conversion-card p {
+  margin: 0;
+}
+
+.conversion-source {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.conversion-source span,
+.conversion-result span,
+.conversion-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.conversion-source strong,
+.conversion-result strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+}
+
+.conversion-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.conversion-choice label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.conversion-choice select,
+.reference-search {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.conversion-suggestion {
+  padding: 10px 12px;
+  border-left: 3px solid #c9a55d;
+  background: #fffbf2;
+  color: #72591f;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.conversion-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 .mapping-list {
   display: grid;
   gap: 10px;
@@ -2583,6 +2694,7 @@ const sageConnectLink = document.querySelector("#sageConnectLink");
 const sageDisconnectButton = document.querySelector("#sageDisconnectButton");
 const refreshSageReferencesButton = document.querySelector("#refreshSageReferencesButton");
 const mappingNotice = document.querySelector("#mappingNotice");
+const conversionSetupSummary = document.querySelector("#conversionSetupSummary");
 const taxMappingBody = document.querySelector("#taxMappingBody");
 const ledgerMappingBody = document.querySelector("#ledgerMappingBody");
 const customerMappingBody = document.querySelector("#customerMappingBody");
@@ -2879,12 +2991,20 @@ refreshSageReferencesButton.addEventListener("click", async () => {
     console.error(error);
   } finally {
     refreshSageReferencesButton.disabled = false;
-    refreshSageReferencesButton.textContent = "Refresh Sage references";
+    refreshSageReferencesButton.textContent = "Refresh Sage options";
   }
 });
 
 taxMappingBody.addEventListener("click", async (event) => {
+  const suggestion = event.target instanceof Element ? event.target.closest("[data-suggest-tax]") : null;
   const button = event.target instanceof Element ? event.target.closest("[data-save-tax]") : null;
+  if (suggestion) {
+    const select = taxMappingBody.querySelector("#" + cssEscape("tax-" + slug(suggestion.dataset.suggestTax || "")));
+    if (select) {
+      select.value = suggestion.dataset.sageEntityId || "";
+    }
+    return;
+  }
   if (!button) {
     return;
   }
@@ -2899,6 +3019,18 @@ ledgerMappingBody.addEventListener("click", async (event) => {
   }
 
   await saveReferenceMapping("ledger_account", button.dataset.saveLedger || "", button.dataset.context || "", ledgerMappingBody);
+});
+
+ledgerMappingBody.addEventListener("input", (event) => {
+  const search = event.target instanceof Element ? event.target.closest("[data-reference-search]") : null;
+  if (!search) {
+    return;
+  }
+  const select = ledgerMappingBody.querySelector("#" + cssEscape(search.dataset.referenceSearch || ""));
+  const query = String(search.value || "").trim().toLowerCase();
+  for (const option of Array.from(select?.options || [])) {
+    option.hidden = Boolean(query) && !option.textContent.toLowerCase().includes(query);
+  }
 });
 
 customerMappingBody.addEventListener("click", async (event) => {
@@ -3274,6 +3406,7 @@ function renderReviewTotals() {
 }
 
 function renderMappingScreens() {
+  renderConversionSetupSummary();
   renderTaxMappings();
   renderLedgerMappings();
   renderCustomerMappings();
@@ -3290,10 +3423,20 @@ function renderTaxMappings() {
 
   taxMappingBody.innerHTML = codes.map((code) => {
     const saved = sageReferences.tax_mappings.find((mapping) => mapping.source_code === code);
-    return '<div class="mapping-row">' +
-      '<div><strong>' + escapeHtml(code) + '</strong><small>Removals Manager tax code</small>' + savedBadge(saved) + '</div>' +
-      sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id) +
-      '<button type="button" data-save-tax="' + escapeHtml(code) + '">Save mapping</button>' +
+    const usage = taxCodeUsage(code);
+    const suggested = taxSuggestion(code, options);
+    const result = saved
+      ? '<div class="conversion-result"><div><span>' + escapeHtml(code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-tax="' + escapeHtml(code) + '">Change</button></div>'
+      : "";
+    const suggestion = suggested
+      ? '<div class="conversion-suggestion"><strong>Suggested match: ' + escapeHtml(sageTaxLabel(suggested)) + '</strong><br>T9 commonly represents transactions outside the scope of VAT in Sage 50. Please confirm this matches the business accounting treatment.<br><button class="secondary-button" type="button" data-suggest-tax="' + escapeHtml(code) + '" data-sage-entity-id="' + escapeHtml(suggested.sage_entity_id) + '">Use suggested option</button></div>'
+      : "";
+    return '<div class="conversion-card">' +
+      '<div class="conversion-source"><div><span>Source tax code</span><strong>' + escapeHtml(code) + '</strong></div><div><span>Found in</span><strong>' + escapeHtml(usage.source) + '</strong></div></div>' +
+      '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Source net total: ' + formatSterling(usage.net) + ' · Source VAT total: ' + formatSterling(usage.vat) + '<br>Example: ' + escapeHtml(usage.example) + (usage.allZeroVat ? ' · All source VAT values are £0.00' : '') + '</p>' +
+      suggestion +
+      '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id, "Select VAT treatment", sageTaxLabel) + '</label><button type="button" data-save-tax="' + escapeHtml(code) + '">Save VAT choice</button></div>' +
+      result +
       '</div>';
   }).join("");
 }
@@ -3309,10 +3452,15 @@ function renderLedgerMappings() {
 
   ledgerMappingBody.innerHTML = entries.map((entry) => {
     const saved = sageReferences.ledger_mappings.find((mapping) => mapping.source_code === entry.source_code && mapping.source_context === entry.source_context);
-    return '<div class="mapping-row">' +
-      '<div><strong>' + escapeHtml(entry.source_code) + '</strong><small>' + escapeHtml(formatTransactionType(entry.source_context)) + '</small>' + savedBadge(saved) + '</div>' +
-      sageReferenceSelect("ledger-" + slug(entry.source_context + "-" + entry.source_code), options, saved?.sage_entity_id) +
-      '<button type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Save mapping</button>' +
+    const usage = ledgerCodeUsage(entry.source_code, entry.source_context);
+    const result = saved
+      ? '<div class="conversion-result"><div><span>' + escapeHtml(entry.source_code) + ' will be converted to</span><strong>' + escapeHtml(saved.sage_display_name) + '</strong></div><button class="secondary-button" type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Change</button></div>'
+      : "";
+    return '<div class="conversion-card">' +
+      '<div class="conversion-source"><div><span>Source nominal code</span><strong>' + escapeHtml(entry.source_code) + '</strong></div><div><span>Used for</span><strong>' + escapeHtml(formatTransactionType(entry.source_context)) + '</strong></div></div>' +
+      '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Total value: ' + formatSterling(usage.total) + '<br>Example: ' + escapeHtml(usage.example) + '</p>' +
+      '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("ledger-" + slug(entry.source_context + "-" + entry.source_code), options, saved?.sage_entity_id, "Select sales or ledger category", sageLedgerLabel) + referenceSearchInput("ledger-" + slug(entry.source_context + "-" + entry.source_code), "Search by category code or name") + '</label><button type="button" data-save-ledger="' + escapeHtml(entry.source_code) + '" data-context="' + escapeHtml(entry.source_context) + '">Save category choice</button></div>' +
+      result +
       '</div>';
   }).join("");
 }
@@ -3557,13 +3705,85 @@ function distinctBy(values) {
   return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))].sort();
 }
 
-function sageReferenceSelect(id, entries, selectedId) {
-  const options = ['<option value="">Choose Sage record</option>'].concat(entries.map((entry) => {
+function sageReferenceSelect(id, entries, selectedId, placeholder, labelForEntry) {
+  const options = ['<option value="">' + escapeHtml(placeholder || "Choose Sage record") + '</option>'].concat(entries.map((entry) => {
     const selected = entry.sage_entity_id === selectedId ? " selected" : "";
-    const code = entry.source_code ? entry.source_code + " - " : "";
-    return '<option value="' + escapeHtml(entry.sage_entity_id) + '"' + selected + '>' + escapeHtml(code + entry.sage_display_name) + '</option>';
+    return '<option value="' + escapeHtml(entry.sage_entity_id) + '"' + selected + '>' + escapeHtml(labelForEntry ? labelForEntry(entry) : entry.sage_display_name) + '</option>';
   }));
   return '<select id="' + escapeHtml(id) + '">' + options.join("") + '</select>';
+}
+
+function referenceSearchInput(selectId, placeholder) {
+  return '<input class="reference-search" type="search" data-reference-search="' + escapeHtml(selectId) + '" placeholder="' + escapeHtml(placeholder) + '">';
+}
+
+function renderConversionSetupSummary() {
+  const taxCodes = distinctBy(reviewRows.map((row) => row.tax_code).filter(Boolean));
+  const ledgerEntries = distinctLedgerEntries();
+  const customers = uniqueCustomers();
+  const taxOutstanding = taxCodes.filter((code) => !sageReferences.tax_mappings.some((mapping) => mapping.source_code === code && mapping.manually_confirmed)).length;
+  const ledgerOutstanding = ledgerEntries.filter((entry) => !sageReferences.ledger_mappings.some((mapping) => mapping.source_code === entry.source_code && mapping.source_context === entry.source_context && mapping.manually_confirmed)).length;
+  const customersOutstanding = customers.filter((customer) => !sageReferences.customer_mappings.some((mapping) => mapping.normalized_customer_name === customer.normalized && mapping.manually_confirmed)).length;
+  const complete = reviewRows.length > 0 && taxOutstanding === 0 && ledgerOutstanding === 0 && customersOutstanding === 0;
+
+  conversionSetupSummary.className = "conversion-summary" + (complete ? " complete" : "");
+  conversionSetupSummary.innerHTML = complete
+    ? '<strong>Conversion setup complete</strong><span>All required Sage options have been selected.</span>'
+    : '<strong>Conversion setup</strong><span>' + taxOutstanding + ' VAT code' + plural(taxOutstanding) + ' need' + (taxOutstanding === 1 ? "s" : "") + ' reviewing</span><span>' + ledgerOutstanding + ' nominal code' + plural(ledgerOutstanding) + ' need' + (ledgerOutstanding === 1 ? "s" : "") + ' reviewing</span><span>' + customersOutstanding + ' customer match' + plural(customersOutstanding) + ' outstanding</span>';
+}
+
+function taxCodeUsage(code) {
+  const rows = reviewRows.filter((row) => row.tax_code === code);
+  return {
+    count: rows.length,
+    net: rows.reduce((total, row) => total + numericAmount(row.amount), 0),
+    vat: rows.reduce((total, row) => total + numericAmount(row.vat_amount), 0),
+    source: distinctBy(rows.map((row) => formatTransactionType(row.transaction_type))).join(", ") || "Uploaded CSV",
+    example: rows[0]?.reference || rows[0]?.invoice_number || "No reference available",
+    allZeroVat: rows.length > 0 && rows.every((row) => numericAmount(row.vat_amount) === 0),
+  };
+}
+
+function ledgerCodeUsage(sourceCode, sourceContext) {
+  const rows = reviewRows.filter((row) => row.nominal_code === sourceCode && row.transaction_type === sourceContext);
+  return {
+    count: rows.length,
+    total: rows.reduce((total, row) => total + grossAmount(row), 0),
+    example: rows[0]?.reference || rows[0]?.invoice_number || "No reference available",
+  };
+}
+
+function taxSuggestion(code, entries) {
+  if (code.toUpperCase() !== "T9") {
+    return null;
+  }
+  return entries.find((entry) => sageTaxLabel(entry).toLowerCase().includes("no vat")) || null;
+}
+
+function sageTaxLabel(entry) {
+  const percentage = sagePercentage(entry);
+  return percentage === null ? entry.sage_display_name : entry.sage_display_name + " - " + percentage + "%";
+}
+
+function sageLedgerLabel(entry) {
+  const code = entry.source_code ? entry.source_code + " - " : "";
+  return code + entry.sage_display_name;
+}
+
+function sagePercentage(entry) {
+  const raw = entry.raw || {};
+  for (const key of ["percentage", "rate", "tax_rate_percentage"]) {
+    const value = raw[key];
+    const number = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(number)) {
+      return number;
+    }
+  }
+  return null;
+}
+
+function formatSterling(value) {
+  return "£" + formatMoney(value);
 }
 
 function savedBadge(saved) {
