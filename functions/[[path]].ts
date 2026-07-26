@@ -51,6 +51,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
+const APP_ASSET_VERSION = "20260726-2";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1179,7 +1180,7 @@ function textResponse(body: string, contentType: string): Response {
     headers: {
       "Content-Type": contentType,
       ...securityHeaders,
-      "Cache-Control": "public, max-age=3600",
+      "Cache-Control": "no-store",
     },
   });
 }
@@ -1606,7 +1607,7 @@ function uploadPage(): string {
           </div>
         </section>
       </main>
-      <script src="/assets/app.js" defer></script>
+      <script src="/assets/app.js?v=${APP_ASSET_VERSION}" defer></script>
     `,
   );
 }
@@ -1626,7 +1627,7 @@ function layout(title: string, body: string): string {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(title)} | Sage Import Checker</title>
-    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/styles.css?v=${APP_ASSET_VERSION}">
   </head>
   <body>
     ${body}
