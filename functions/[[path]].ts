@@ -56,7 +56,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260726-17";
+const APP_ASSET_VERSION = "20260726-18";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -3600,7 +3600,10 @@ function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
   updatePreviewToggle(rows.length);
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
-  const pdfText = pdfSummaries.length > 0 ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed metadata checks." : "";
+  const pdfRowCount = Number(result.summary?.pdf_rows || 0);
+  const pdfText = pdfSummaries.length > 0
+    ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " checked; " + pdfRowCount + " invoice row" + plural(pdfRowCount) + " read from the monthly report."
+    : "";
   latestOriginalFileNames = [
     ...(result.files || []).map((file) => file.file_name).filter(Boolean),
     ...pdfSummaries.map((file) => file.fileName).filter(Boolean),
@@ -4680,10 +4683,10 @@ async function extractPdfText(file) {
     pages.push(lines
       .sort((left, right) => right.y - left.y)
       .map((line) => line.items.sort((left, right) => left.x - right.x).map((item) => item.text).join(" "))
-      .join("\\n"));
+      .join("\n"));
   }
 
-  return pages.join("\\n");
+  return pages.join("\n");
 }
 
 function renderNotice(state, message) {
