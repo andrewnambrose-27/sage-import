@@ -58,7 +58,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260727-2";
+const APP_ASSET_VERSION = "20260729-1";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -583,10 +583,11 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
       mode: isUnnamedCustomerSelection ? "manual_query" : "named_search",
       queryLength: searchTerm.length,
     });
-    const [contactData, savedMappings] = await Promise.all([
+    const [contactResult, savedMappings] = await Promise.all([
       searchSageContacts(client.value, searchTerm),
       database.value.listCustomerMappings((await activeSageBusinessId(env)) ?? ""),
     ]);
+    const contactData = { $items: contactResult.items };
     const matchesById = new Map(parseSageContactItems(contactData).map((match) => [match.sage_contact_id, match]));
     const normalized = normalizedCustomerName || normalizeForClient(customerName);
     const matches = [...matchesById.values()].sort((left, right) => {
@@ -598,6 +599,8 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
     console.log("Sage contact search completed", {
       mode: isUnnamedCustomerSelection ? "all_contacts" : "named_search",
       returnedContacts: matches.length,
+      pages: contactResult.diagnostics.length,
+      lastStatus: contactResult.diagnostics.at(-1)?.status ?? null,
     });
 
     return jsonResponse({
@@ -617,6 +620,17 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
   } catch (error) {
     if (error instanceof SageAuthorizationError) {
       return jsonResponse({ ok: false, error: "Reconnect Sage before searching contacts." }, 401);
+    }
+    if (error instanceof SageReferenceFetchError) {
+      const message = error.status === 403
+        ? "Sage did not allow this app to read contacts. Check the connected user's Contacts permission."
+        : error.status === 429
+          ? "Sage is temporarily limiting contact searches. Wait a moment, then try again."
+          : "Sage could not return contacts right now. Try again in a moment.";
+      return jsonResponse({ ok: false, error: message, status: error.status }, error.status === 403 || error.status === 429 ? error.status : 502);
+    }
+    if (error instanceof SageResponseShapeError) {
+      return jsonResponse({ ok: false, error: "Sage returned contacts in an unexpected format. Reconnect Sage and try again." }, 502);
     }
     console.error("Sage contact search failed", safeError(error));
     return jsonResponse({ ok: false, error: "Sage contacts could not be searched." }, 502);
@@ -1377,6 +1391,9 @@ function htmlResponse(body: string, status = 200): Response {
     status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
       ...securityHeaders,
     },
   });
@@ -4235,7 +4252,7 @@ async function searchContact(normalizedCustomerName) {
     button.textContent = "Searching Sage...";
   }
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 12_000);
+  const timeout = window.setTimeout(() => controller.abort(), 25_000);
   try {
     const response = await fetch("/api/sage/contacts/search", {
       method: "POST",
@@ -4327,7 +4344,7 @@ async function createPlaceholderContact(normalizedCustomerName, options = {}) {
     rememberCustomerMapping(customer, result);
     renderCustomerMappings();
     if (!options.deferRefresh) {
-      void refreshSageReadiness();
+      await loadSageReferences();
     }
     return true;
   } catch (error) {
@@ -4354,7 +4371,7 @@ function rememberCustomerMapping(customer, result) {
     postcode: result.needs_completion ? "TEST" : null,
     manually_confirmed: true,
   };
-  sageReferences.customer_mappings = sageReferences.customer_mappings
+  sageReferences.customer_mappings = (sageReferences.customer_mappings || [])
     .filter((saved) => saved.normalized_customer_name !== customer.normalized)
     .concat(mapping);
 }
@@ -4389,7 +4406,7 @@ async function createAllMissingContacts() {
     added += 1;
   }
 
-  void refreshSageReadiness();
+  await loadSageReferences();
   if (added === missingCustomers.length) {
     renderMappingNotice("success", added + " contact" + plural(added) + " added and saved. Complete their TEST details in Sage before sending invoices.");
   } else {

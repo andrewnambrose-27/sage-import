@@ -272,12 +272,53 @@ describe("Sage contact search", () => {
       { id: "contact-1", displayed_as: "Charlotte Walker" },
     ])) as unknown as typeof fetch;
 
-    await expect(searchSageContacts(new SageApiClient(store, config, fetcher), "Charlotte Walker")).resolves.toEqual({
-      $items: [{ id: "contact-1", displayed_as: "Charlotte Walker" }],
+    await expect(searchSageContacts(new SageApiClient(store, config, fetcher), "Charlotte Walker")).resolves.toMatchObject({
+      items: [{ id: "contact-1", displayed_as: "Charlotte Walker" }],
+      diagnostics: [{ itemCount: 1, page: 1, status: 200 }],
     });
     const requestUrl = String(vi.mocked(fetcher).mock.calls[0][0]);
     expect(requestUrl).toContain("contact_type_id=CUSTOMER");
     expect(requestUrl).toContain("search=Charlotte+Walker");
+    expect(requestUrl).toContain("attributes=all");
+  });
+
+  it("follows Sage's documented $next pagination even when Sage uses a smaller page size", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const page = new URL(String(input)).searchParams.get("page");
+      return page === "1"
+        ? jsonResponse({
+          $total: 2,
+          $page: 1,
+          $next: "/contacts?page=2&items_per_page=1",
+          $itemsPerPage: 1,
+          $items: [{ id: "contact-1", displayed_as: "Charlotte Walker" }],
+        })
+        : jsonResponse({
+          $total: 2,
+          $page: 2,
+          $next: null,
+          $itemsPerPage: 1,
+          $items: [{ id: "contact-2", displayed_as: "Charlotte Walker Ltd" }],
+        });
+    }) as unknown as typeof fetch;
+
+    const result = await searchSageContacts(new SageApiClient(store, config, fetcher), "Charlotte");
+    expect(result.items.map((item) => item.id)).toEqual(["contact-1", "contact-2"]);
+    expect(result.diagnostics).toHaveLength(2);
+  });
+
+  it("preserves Sage contact permission errors for the API handler", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => new Response("forbidden", { status: 403 })) as unknown as typeof fetch;
+
+    await expect(searchSageContacts(new SageApiClient(store, config, fetcher), "Charlotte")).rejects.toMatchObject({
+      name: "SageReferenceFetchError",
+      endpoint: expect.stringContaining("/contacts?"),
+      status: 403,
+    });
   });
 });
 

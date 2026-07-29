@@ -557,45 +557,15 @@ export function normalizeSageLedgerAccount(item: Record<string, unknown>): SageL
   };
 }
 
-export async function searchSageContacts(client: SageApiClient, search: string): Promise<unknown> {
+export async function searchSageContacts(client: SageApiClient, search: string): Promise<SageReferenceFetchResult> {
   const params = new URLSearchParams();
   if (search.trim()) params.set("search", search);
   params.set("contact_type_id", "CUSTOMER");
-  params.set("items_per_page", "50");
-  const items: unknown[] = [];
-  const seenPages = new Set<number>();
-  for (let page = 1; page <= 20; page += 1) {
-    if (seenPages.has(page)) break;
-    seenPages.add(page);
-    params.set("page", String(page));
-    const response = await sageRequestWithTimeout(client, `${sageReadOnlyPaths.contacts}?${params.toString()}`, {}, 10_000);
-    if (!response.ok) {
-      throw new SageBusinessLookupError("Sage contacts could not be searched.");
-    }
-    const data = await response.json() as unknown;
-    const dataRecord = isRecord(data) ? data : null;
-    const pageItems = Array.isArray(data)
-      ? data
-      : Array.isArray(dataRecord?.$items)
-        ? dataRecord.$items
-        : Array.isArray(dataRecord?.items)
-          ? dataRecord.items
-          : null;
-    if (!pageItems) {
-      throw new SageBusinessLookupError("Sage contacts returned an unexpected response structure.");
-    }
-    console.info("Sage contact lookup diagnostic", {
-      endpoint: sageReadOnlyPaths.contacts,
-      status: response.status,
-      page,
-      returnedContacts: pageItems.length,
-      searchMode: search.trim() ? "named" : "all_customers",
-    });
-    items.push(...pageItems);
-    const next = dataRecord?.$next ?? dataRecord?.next;
-    if (!next || pageItems.length < 50 || search.trim()) break;
-  }
-  return { $items: items };
+  return fetchSageReferenceCollection(
+    client,
+    `${sageReadOnlyPaths.contacts}?${params.toString()}`,
+    "Sage contacts",
+  );
 }
 
 export function buildSagePlaceholderCustomerPayload(customerName: string): SagePlaceholderCustomerPayload {
@@ -874,6 +844,10 @@ async function fetchSageReferenceCollection(
     logSageReferenceDiagnostic(diagnostic);
     items.push(...pageItems);
 
+    if (metadata.hasNext === false) {
+      break;
+    }
+
     if (metadata.totalPages !== null) {
       if (page >= metadata.totalPages) {
         break;
@@ -903,7 +877,7 @@ function withPagination(path: string, page: number, itemsPerPage: number): strin
   return `${url.pathname}${url.search}`;
 }
 
-function paginationMetadata(response: Response, data: unknown): { totalPages: number | null; totalItems: number | null } {
+function paginationMetadata(response: Response, data: unknown): { totalPages: number | null; totalItems: number | null; hasNext: boolean | null } {
   const headerNumber = (name: string): number | null => {
     const value = Number(response.headers.get(name));
     return Number.isFinite(value) && value > 0 ? value : null;
@@ -911,9 +885,24 @@ function paginationMetadata(response: Response, data: unknown): { totalPages: nu
   const object = isRecord(data) ? data : {};
   const nested = isRecord(object.pagination) ? object.pagination : {};
   const numberValue = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) ? value : null;
+  const totalItems = headerNumber("x-pagination-totalitems")
+    ?? headerNumber("x-pagination-total-items")
+    ?? numberValue(nested.total_items)
+    ?? numberValue(object.total_items)
+    ?? numberValue(object.$total);
+  const currentPage = numberValue(object.$page);
+  const itemsPerPage = numberValue(object.$itemsPerPage);
+  const explicitTotalPages = headerNumber("x-pagination-totalpages")
+    ?? headerNumber("x-pagination-total-pages")
+    ?? numberValue(nested.total_pages)
+    ?? numberValue(object.total_pages);
+  const totalPages = explicitTotalPages
+    ?? (totalItems !== null && itemsPerPage !== null && itemsPerPage > 0 ? Math.ceil(totalItems / itemsPerPage) : null);
+  const next = object.$next ?? object.next;
   return {
-    totalPages: headerNumber("x-pagination-totalpages") ?? headerNumber("x-pagination-total-pages") ?? numberValue(nested.total_pages) ?? numberValue(object.total_pages),
-    totalItems: headerNumber("x-pagination-totalitems") ?? headerNumber("x-pagination-total-items") ?? numberValue(nested.total_items) ?? numberValue(object.total_items),
+    totalPages,
+    totalItems,
+    hasNext: typeof next === "string" ? next.length > 0 : next === null ? false : currentPage !== null && totalPages !== null ? currentPage < totalPages : null,
   };
 }
 
