@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260729-7";
+const APP_ASSET_VERSION = "20260729-8";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1800,20 +1800,6 @@ function uploadPage(): string {
             </div>
           </div>
           <div id="reviewSaveNotice" class="notice"></div>
-          <div id="reviewFilters" class="filter-row" aria-label="Review filters">
-            <button type="button" class="filter-button active" data-filter="all">All</button>
-            <button type="button" class="filter-button" data-filter="import_candidates">Import candidates</button>
-            <button type="button" class="filter-button" data-filter="excluded_storage">Excluded storage</button>
-            <button type="button" class="filter-button" data-filter="needs_review">Needs review</button>
-            <button type="button" class="filter-button" data-filter="mismatches">Mismatches</button>
-            <button type="button" class="filter-button" data-filter="missing_customer">Missing customer</button>
-          </div>
-          <div id="reviewBatchActions" class="button-row review-batch-actions">
-            <span>Apply to visible rows:</span>
-            <button type="button" class="secondary-button" data-batch-review="include">Include</button>
-            <button type="button" class="secondary-button" data-batch-review="exclude">Exclude</button>
-            <button type="button" class="secondary-button" data-batch-review="review">Mark for review</button>
-          </div>
           <div id="reviewTotals" class="summary-cards review-totals">
             <article><strong>0</strong><span>Included rows</span></article>
             <article><strong>0.00</strong><span>Included net</span></article>
@@ -1821,6 +1807,34 @@ function uploadPage(): string {
             <article><strong>0.00</strong><span>Included gross</span></article>
             <article><strong>0</strong><span>Review needed</span></article>
             <article><strong>0</strong><span>Excluded rows</span></article>
+          </div>
+          <div class="review-table-tools">
+            <div class="review-filter-group">
+              <div class="review-tool-heading">
+                <strong>Filter transactions</strong>
+                <span>Bulk actions affect only the rows shown by the selected filter.</span>
+              </div>
+              <div id="reviewFilters" class="filter-row" aria-label="Review filters">
+                <button type="button" class="filter-button active" data-filter="all">All</button>
+                <button type="button" class="filter-button" data-filter="import_candidates">Import candidates</button>
+                <button type="button" class="filter-button" data-filter="excluded_storage">Excluded storage</button>
+                <button type="button" class="filter-button" data-filter="needs_review">Needs review</button>
+                <button type="button" class="filter-button" data-filter="mismatches">Mismatches</button>
+                <button type="button" class="filter-button" data-filter="missing_customer">Missing customer</button>
+              </div>
+            </div>
+            <div id="reviewBatchActions" class="review-batch-actions" aria-label="Bulk actions for visible rows">
+              <div class="review-batch-copy">
+                <span class="review-tool-eyebrow">Bulk actions</span>
+                <strong>Update all visible rows</strong>
+                <small id="reviewBatchHint">Check the selected filter, then apply one decision to every visible row.</small>
+              </div>
+              <div class="review-batch-buttons">
+                <button type="button" data-batch-review="include" disabled>Include all visible</button>
+                <button type="button" class="secondary-button" data-batch-review="exclude" disabled>Exclude all visible</button>
+                <button type="button" class="secondary-button" data-batch-review="review" disabled>Mark all for review</button>
+              </div>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="review-table">
@@ -2472,11 +2486,43 @@ h2 {
   color: var(--sage-dark);
 }
 
+.review-table-tools {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbfa;
+}
+
+.review-filter-group {
+  display: grid;
+  gap: 10px;
+}
+
+.review-tool-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-tool-heading strong {
+  color: var(--ink);
+}
+
+.review-tool-heading span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .filter-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
+  margin: 0;
 }
 
 .filter-button {
@@ -2493,6 +2539,54 @@ h2 {
   border-color: rgba(15, 107, 91, 0.4);
   background: rgba(15, 107, 91, 0.1);
   color: var(--sage-dark);
+}
+
+.review-batch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px;
+  border: 1px solid rgba(15, 107, 91, 0.26);
+  border-radius: 9px;
+  background: #eff9f5;
+}
+
+.review-batch-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.review-batch-copy strong {
+  color: var(--ink);
+  font-size: 0.96rem;
+}
+
+.review-batch-copy small {
+  color: var(--muted);
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.review-tool-eyebrow {
+  color: var(--sage-dark);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.review-batch-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.review-batch-buttons button {
+  min-height: 40px;
+  padding: 0 14px;
+  white-space: nowrap;
 }
 
 .notice {
@@ -3180,6 +3274,21 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 
+  .review-tool-heading,
+  .review-batch-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .review-batch-buttons {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .review-batch-buttons button {
+    width: 100%;
+  }
+
   .mapping-row {
     grid-template-columns: 1fr;
   }
@@ -3228,6 +3337,7 @@ const reviewBody = document.querySelector("#reviewBody");
 const reviewIntro = document.querySelector("#reviewIntro");
 const reviewFilters = document.querySelector("#reviewFilters");
 const reviewBatchActions = document.querySelector("#reviewBatchActions");
+const reviewBatchHint = document.querySelector("#reviewBatchHint");
 const reviewTotals = document.querySelector("#reviewTotals");
 const exportReviewButton = document.querySelector("#exportReviewButton");
 const saveBatchButton = document.querySelector("#saveBatchButton");
@@ -3406,8 +3516,7 @@ reviewBatchActions.addEventListener("click", (event) => {
     row.review_decision = decision;
     changed += 1;
   }
-  reviewSaveNotice.className = "notice success";
-  reviewSaveNotice.textContent = changed + " visible row" + plural(changed) + " updated." + (skippedStorage ? " " + skippedStorage + " storage row" + plural(skippedStorage) + " remain excluded for safety." : "");
+  renderReviewSaveNotice("success", changed + " visible row" + plural(changed) + " updated." + (skippedStorage ? " " + skippedStorage + " storage row" + plural(skippedStorage) + " remain excluded for safety." : ""));
   renderReviewTable();
   refreshSageReadiness();
 });
@@ -4029,12 +4138,33 @@ function resetReviewScreen() {
   resetDraftInvoiceWorkspace();
   reviewIntro.textContent = "This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.";
   renderReviewTotals();
+  updateReviewBatchActions();
   renderMappingScreens();
   reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions ready for review yet.</td></tr>';
 }
 
+function updateReviewBatchActions() {
+  const visibleCount = reviewRows.filter(matchesActiveReviewFilter).length;
+  const labels = {
+    include: "Include all visible",
+    exclude: "Exclude all visible",
+    review: "Mark all for review",
+  };
+
+  reviewBatchHint.textContent = visibleCount > 0
+    ? visibleCount + " row" + plural(visibleCount) + " currently visible. These changes remain review-only until you save the batch."
+    : "No rows match the selected filter.";
+
+  for (const button of reviewBatchActions.querySelectorAll("[data-batch-review]")) {
+    const label = labels[button.dataset.batchReview] || "Update visible rows";
+    button.disabled = visibleCount === 0;
+    button.textContent = visibleCount > 0 ? label + " (" + visibleCount + ")" : label;
+  }
+}
+
 function renderReviewTable() {
   renderReviewTotals();
+  updateReviewBatchActions();
 
   if (reviewRows.length === 0) {
     reviewBody.innerHTML = '<tr><td colspan="13" class="empty-state">No transactions ready for review yet.</td></tr>';
