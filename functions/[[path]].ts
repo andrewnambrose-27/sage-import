@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260729-5";
+const APP_ASSET_VERSION = "20260729-6";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -4223,13 +4223,7 @@ function renderCustomerMappings() {
         '</div>';
     }
     const matches = [...(customer.matches || [])];
-    const contactOptions = matches.map((match) =>
-      '<option value="' + escapeHtml(match.sage_contact_id) + '" data-contact-display-name="' + escapeHtml(match.sage_contact_display_name) + '">' +
-        (match.normalized_display_name === customer.normalized ? "Suggested exact match: " : "") + escapeHtml(match.sage_contact_display_name) +
-        (match.postcode ? " - " + escapeHtml(match.postcode) : "") +
-        (match.email ? " - " + escapeHtml(match.email) : "") +
-      '</option>'
-    ).join("");
+    const contactOptions = matches.map((match) => contactOptionHtml(match, customer.normalized)).join("");
     const hasMatches = matches.length > 0;
     const isUnnamedCustomer = customer.normalized === "__unnamed_customer__";
     const contactQuery = customer.search_query || (isUnnamedCustomer ? "" : customer.name);
@@ -4276,6 +4270,12 @@ function contactSearchReportHtml(customer) {
   const title = succeeded
     ? "Sage search completed: " + String(diagnostic.contacts_returned ?? (customer.matches || []).length) + " contact" + plural(Number(diagnostic.contacts_returned ?? (customer.matches || []).length)) + " returned."
     : "Sage search failed: " + (customer.missing_contact_message || "No response details were returned.");
+  return '<div id="' + reportId + '" class="contact-search-report ' + (succeeded ? "success" : "error") + '" role="status" aria-live="polite">' +
+    contactSearchReportContent(diagnostic, title) +
+    '</div>';
+}
+
+function contactSearchReportContent(diagnostic, title) {
   const summary = [
     diagnostic.report_id ? "Report " + diagnostic.report_id : "No report ID",
     diagnostic.app_http_status ? "App HTTP " + diagnostic.app_http_status : "No app HTTP response",
@@ -4284,10 +4284,9 @@ function contactSearchReportHtml(customer) {
     diagnostic.stage ? "Stage: " + diagnostic.stage : "Stage unavailable",
   ].join(" · ");
 
-  return '<div id="' + reportId + '" class="contact-search-report ' + (succeeded ? "success" : "error") + '" role="status" aria-live="polite">' +
-    '<strong>' + escapeHtml(title) + '</strong><small>' + escapeHtml(summary) + '</small>' +
+  return '<strong>' + escapeHtml(title) + '</strong><small>' + escapeHtml(summary) + '</small>' +
     '<details><summary>Technical report</summary><pre>' + escapeHtml(JSON.stringify(diagnostic, null, 2)) + '</pre></details>' +
-    '</div>';
+    '';
 }
 
 function showContactSearchProgress(normalizedCustomerName, reportId, message) {
@@ -4298,6 +4297,66 @@ function showContactSearchProgress(normalizedCustomerName, reportId, message) {
   report.hidden = false;
   report.className = "contact-search-report";
   report.innerHTML = '<strong>' + escapeHtml(message) + '</strong><small>Report ' + escapeHtml(reportId) + '</small>';
+}
+
+function showContactSearchOutcome(normalizedCustomerName, diagnostic, title) {
+  const report = customerMappingBody.querySelector("#contact-search-report-" + cssEscape(slug(normalizedCustomerName)));
+  if (!report) {
+    return;
+  }
+  const succeeded = diagnostic?.outcome === "success";
+  report.hidden = false;
+  report.className = "contact-search-report " + (succeeded ? "success" : "error");
+  report.innerHTML = contactSearchReportContent(diagnostic || {}, title);
+}
+
+function finishContactSearch(normalizedCustomerName, result, noticeState, message) {
+  const diagnostic = result.diagnostic || {};
+  const title = diagnostic.outcome === "success"
+    ? "Sage search completed: " + String(diagnostic.contacts_returned ?? (result.matches || []).length) + " contact" + plural(Number(diagnostic.contacts_returned ?? (result.matches || []).length)) + " returned."
+    : "Sage search failed: " + message;
+  showContactSearchOutcome(normalizedCustomerName, diagnostic, title);
+
+  try {
+    rememberContactSearch(normalizedCustomerName, result);
+    applyContactSearchResultInPlace(normalizedCustomerName, result.matches || []);
+    renderMappingNotice(noticeState, message);
+  } catch (displayError) {
+    const failedDiagnostic = {
+      ...diagnostic,
+      outcome: "error",
+      stage: "browser_result_display",
+      browser_error: displayError instanceof Error ? displayError.message : String(displayError),
+    };
+    showContactSearchOutcome(normalizedCustomerName, failedDiagnostic, "The search response arrived, but the browser could not display it.");
+    console.error(displayError);
+  }
+}
+
+function applyContactSearchResultInPlace(normalizedCustomerName, matches) {
+  const select = customerMappingBody.querySelector("#contact-" + cssEscape(slug(normalizedCustomerName)));
+  const saveButton = customerMappingBody.querySelector('[data-save-contact="' + cssEscape(normalizedCustomerName) + '"]');
+  if (!select) {
+    throw new Error("The Sage contact dropdown is no longer available.");
+  }
+  if (matches.length > 0) {
+    select.innerHTML = '<option value="">Choose Sage contact</option>' + matches.map((match) => contactOptionHtml(match, normalizedCustomerName)).join("");
+    select.disabled = false;
+  } else {
+    select.innerHTML = '<option>No Sage contacts found</option>';
+    select.disabled = true;
+  }
+  if (saveButton) {
+    saveButton.disabled = matches.length === 0;
+  }
+}
+
+function contactOptionHtml(match, normalizedCustomerName) {
+  return '<option value="' + escapeHtml(match.sage_contact_id) + '" data-contact-display-name="' + escapeHtml(match.sage_contact_display_name) + '">' +
+    (match.normalized_display_name === normalizedCustomerName ? "Suggested exact match: " : "") + escapeHtml(match.sage_contact_display_name) +
+    (match.postcode ? " - " + escapeHtml(match.postcode) : "") +
+    (match.email ? " - " + escapeHtml(match.email) : "") +
+    '</option>';
 }
 
 async function loadSageReferences() {
@@ -4434,21 +4493,18 @@ async function searchContact(normalizedCustomerName) {
     const result = await readContactSearchResponse(response, reportId, startedAt);
     if (!response.ok || !result.ok) {
       const message = result.error || "Sage contacts could not be searched.";
-      rememberContactSearch(normalizedCustomerName, { search_query: searchQuery, matches: [], match_status: "none", missing_contact_message: message, diagnostic: result.diagnostic });
-      renderMappingNotice("error", message);
-      renderCustomerMappings();
+      finishContactSearch(normalizedCustomerName, { search_query: searchQuery, matches: [], match_status: "none", missing_contact_message: message, diagnostic: result.diagnostic }, "error", message);
       return;
     }
 
-    rememberContactSearch(normalizedCustomerName, result);
-    renderMappingNotice(result.matches?.length ? "success" : "error", result.missing_contact_message || "Sage contacts loaded. Confirm the correct match manually.");
-    renderCustomerMappings();
+    const message = result.missing_contact_message || "Sage contacts loaded. Confirm the correct match manually.";
+    finishContactSearch(normalizedCustomerName, result, result.matches?.length ? "success" : "error", message);
   } catch (error) {
     const aborted = error && error.name === "AbortError";
     const message = aborted
       ? "Sage contact search took too long. You can try again or create a customer with temporary TEST details."
       : "Sage contacts could not be searched. Try reconnecting Sage if this continues.";
-    rememberContactSearch(normalizedCustomerName, {
+    const result = {
       search_query: searchQuery,
       matches: [],
       match_status: "none",
@@ -4461,9 +4517,8 @@ async function searchContact(normalizedCustomerName) {
         sage_http_statuses: [],
         duration_ms: Date.now() - startedAt,
       },
-    });
-    renderMappingNotice("error", message);
-    renderCustomerMappings();
+    };
+    finishContactSearch(normalizedCustomerName, result, "error", message);
     console.error(error);
   } finally {
     window.clearTimeout(timeout);
@@ -4497,7 +4552,7 @@ async function confirmContactSearchApp(normalizedCustomerName, searchQuery, repo
     const message = aborted
       ? "The app did not respond within five seconds, before Sage was contacted."
       : "The app contact-search endpoint could not be reached, before Sage was contacted.";
-    rememberContactSearch(normalizedCustomerName, {
+    const result = {
       search_query: searchQuery,
       matches: [],
       match_status: "none",
@@ -4510,9 +4565,8 @@ async function confirmContactSearchApp(normalizedCustomerName, searchQuery, repo
         sage_http_statuses: [],
         duration_ms: Date.now() - startedAt,
       },
-    });
-    renderMappingNotice("error", message);
-    renderCustomerMappings();
+    };
+    finishContactSearch(normalizedCustomerName, result, "error", message);
     console.error(error);
     return false;
   } finally {
