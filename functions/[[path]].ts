@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260729-6";
+const APP_ASSET_VERSION = "20260729-7";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -4126,6 +4126,14 @@ function renderMappingScreens() {
   renderCustomerMappings();
 }
 
+function renderMappingNotice(state, message) {
+  if (!mappingNotice) {
+    return;
+  }
+  mappingNotice.className = "notice" + (message ? " show" : "") + (state ? " " + state : "");
+  mappingNotice.textContent = message;
+}
+
 function renderTaxMappings() {
   const codes = distinctBy(reviewRows.map((row) => row.tax_code).filter(Boolean));
   const options = sageReferences.active_tax_rates || [];
@@ -4320,7 +4328,6 @@ function finishContactSearch(normalizedCustomerName, result, noticeState, messag
   try {
     rememberContactSearch(normalizedCustomerName, result);
     applyContactSearchResultInPlace(normalizedCustomerName, result.matches || []);
-    renderMappingNotice(noticeState, message);
   } catch (displayError) {
     const failedDiagnostic = {
       ...diagnostic,
@@ -4330,7 +4337,10 @@ function finishContactSearch(normalizedCustomerName, result, noticeState, messag
     };
     showContactSearchOutcome(normalizedCustomerName, failedDiagnostic, "The search response arrived, but the browser could not display it.");
     console.error(displayError);
+    return;
   }
+
+  renderMappingNotice(noticeState, message);
 }
 
 function applyContactSearchResultInPlace(normalizedCustomerName, matches) {
