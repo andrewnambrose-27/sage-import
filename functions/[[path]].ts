@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260729-4";
+const APP_ASSET_VERSION = "20260729-5";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -145,6 +145,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/api/sage/contacts/search" && request.method === "POST") {
         return handleSageContactSearch(request, env);
+      }
+
+      if (url.pathname === "/api/sage/contacts/ping" && request.method === "GET") {
+        return jsonResponse({ ok: true, asset_version: APP_ASSET_VERSION });
       }
 
       if (url.pathname === "/api/sage/contacts/create-placeholder" && request.method === "POST") {
@@ -4286,14 +4290,14 @@ function contactSearchReportHtml(customer) {
     '</div>';
 }
 
-function showContactSearchProgress(normalizedCustomerName, reportId) {
+function showContactSearchProgress(normalizedCustomerName, reportId, message) {
   const report = customerMappingBody.querySelector("#contact-search-report-" + cssEscape(slug(normalizedCustomerName)));
   if (!report) {
     return;
   }
   report.hidden = false;
   report.className = "contact-search-report";
-  report.innerHTML = '<strong>Contacting Sage...</strong><small>Report ' + escapeHtml(reportId) + ' · waiting for the app and Sage responses</small>';
+  report.innerHTML = '<strong>' + escapeHtml(message) + '</strong><small>Report ' + escapeHtml(reportId) + '</small>';
 }
 
 async function loadSageReferences() {
@@ -4400,13 +4404,22 @@ async function searchContact(normalizedCustomerName) {
   const button = customerMappingBody.querySelector('[data-search-contact="' + cssEscape(normalizedCustomerName) + '"]');
   const reportId = window.crypto && typeof window.crypto.randomUUID === "function" ? window.crypto.randomUUID() : String(Date.now());
   const startedAt = Date.now();
-  showContactSearchProgress(normalizedCustomerName, reportId);
+  showContactSearchProgress(normalizedCustomerName, reportId, "Checking app connection...");
   if (button) {
     button.disabled = true;
     button.textContent = "Searching Sage...";
   }
+  const appIsReachable = await confirmContactSearchApp(normalizedCustomerName, searchQuery, reportId, startedAt);
+  if (!appIsReachable) {
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = "Search Sage contacts";
+    }
+    return;
+  }
+  showContactSearchProgress(normalizedCustomerName, reportId, "App reached; contacting Sage...");
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 25_000);
+  const timeout = window.setTimeout(() => controller.abort(), 15_000);
   try {
     const response = await fetch("/api/sage/contacts/search", {
       method: "POST",
@@ -4458,6 +4471,52 @@ async function searchContact(normalizedCustomerName) {
       button.disabled = false;
       button.textContent = "Search Sage contacts";
     }
+  }
+}
+
+async function confirmContactSearchApp(normalizedCustomerName, searchQuery, reportId, startedAt) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch("/api/sage/contacts/ping", {
+      cache: "no-store",
+      headers: { "X-Contact-Search-ID": reportId },
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok || !contentType.includes("application/json")) {
+      throw new Error("App preflight returned HTTP " + response.status + " as " + (contentType || "an unknown format"));
+    }
+    const result = await response.json();
+    if (!result.ok) {
+      throw new Error("App preflight was not accepted");
+    }
+    return true;
+  } catch (error) {
+    const aborted = error && error.name === "AbortError";
+    const message = aborted
+      ? "The app did not respond within five seconds, before Sage was contacted."
+      : "The app contact-search endpoint could not be reached, before Sage was contacted.";
+    rememberContactSearch(normalizedCustomerName, {
+      search_query: searchQuery,
+      matches: [],
+      match_status: "none",
+      missing_contact_message: message,
+      diagnostic: {
+        report_id: reportId,
+        outcome: "error",
+        stage: aborted ? "app_preflight_timeout" : "app_preflight_response",
+        app_http_status: null,
+        sage_http_statuses: [],
+        duration_ms: Date.now() - startedAt,
+      },
+    });
+    renderMappingNotice("error", message);
+    renderCustomerMappings();
+    console.error(error);
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 

@@ -484,16 +484,29 @@ export class SageApiClient {
 
   private async refreshConnection(connection: SageConnectionRecord): Promise<SageConnectionRecord> {
     const { refreshToken } = await decryptTokenPair(connection, this.config.tokenEncryptionKey);
-    const response = await invokeFetch(this.fetcher, sageOAuthEndpoints.tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: formBody({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    let response: Response;
+    try {
+      response = await invokeFetch(this.fetcher, sageOAuthEndpoints.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: controller.signal,
+        body: formBody({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: this.config.clientId,
+          client_secret: this.config.clientSecret,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new SageAuthorizationError("Sage token refresh took too long. Reconnect Sage and try again.");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       throw new SageAuthorizationError();
@@ -803,7 +816,7 @@ async function fetchSageReferenceCollection(
     seenPages.add(page);
 
     const requestPath = withPagination(path, page, perPage);
-    const response = await sageRequestWithTimeout(client, requestPath, {}, 15_000);
+    const response = await sageRequestWithTimeout(client, requestPath, {}, 10_000);
     const contentType = response.headers.get("content-type");
     if (!response.ok) {
       logSageReferenceDiagnostic({
