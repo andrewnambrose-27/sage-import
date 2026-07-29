@@ -803,7 +803,7 @@ async function fetchSageReferenceCollection(
     seenPages.add(page);
 
     const requestPath = withPagination(path, page, perPage);
-    const response = await client.request(requestPath);
+    const response = await sageRequestWithTimeout(client, requestPath, {}, 15_000);
     const contentType = response.headers.get("content-type");
     if (!response.ok) {
       logSageReferenceDiagnostic({
