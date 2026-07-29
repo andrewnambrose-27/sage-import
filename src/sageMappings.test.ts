@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeReferenceEntries,
   contactMatchStatus,
+  exactSageContactMatches,
   parseSageContactItems,
   parseSageReferenceItems,
   readinessForInvoice,
@@ -19,6 +20,18 @@ describe("contact matching", () => {
     });
 
     expect(contactMatchStatus("a smith", matches)).toBe("ambiguous");
+  });
+
+  it("keeps named customer lookups locked to exact Sage contact names", () => {
+    const matches = parseSageContactItems({
+      $items: [
+        { id: "1", displayed_as: "Tim Hancock" },
+        { id: "2", displayed_as: "Tim Hancock Removals" },
+        { id: "3", displayed_as: "Another Customer" },
+      ],
+    });
+
+    expect(exactSageContactMatches("tim hancock", matches).map((match) => match.sage_contact_id)).toEqual(["1"]);
   });
 });
 

@@ -117,6 +117,10 @@ export function contactMatchStatus(normalizedCustomerName: string, matches: Sage
   return matches.length === 1 ? "ambiguous" : "none";
 }
 
+export function exactSageContactMatches(normalizedCustomerName: string, matches: SageContactMatch[]): SageContactMatch[] {
+  return matches.filter((match) => match.normalized_display_name === normalizedCustomerName);
+}
+
 export function distinctTaxCodes(rows: Array<Pick<PersistableSourceInvoice, "tax_code">>): string[] {
   return [...new Set(rows.map((row) => row.tax_code.trim()).filter(Boolean))].sort();
 }
