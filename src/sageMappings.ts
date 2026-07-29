@@ -117,8 +117,12 @@ export function contactMatchStatus(normalizedCustomerName: string, matches: Sage
   return matches.length === 1 ? "ambiguous" : "none";
 }
 
-export function exactSageContactMatches(normalizedCustomerName: string, matches: SageContactMatch[]): SageContactMatch[] {
-  return matches.filter((match) => match.normalized_display_name === normalizedCustomerName);
+export function rankSageContactMatches(normalizedCustomerName: string, matches: SageContactMatch[]): SageContactMatch[] {
+  return [...matches].sort((left, right) => {
+    const leftExact = left.normalized_display_name === normalizedCustomerName ? 1 : 0;
+    const rightExact = right.normalized_display_name === normalizedCustomerName ? 1 : 0;
+    return rightExact - leftExact || left.sage_contact_display_name.localeCompare(right.sage_contact_display_name);
+  });
 }
 
 export function distinctTaxCodes(rows: Array<Pick<PersistableSourceInvoice, "tax_code">>): string[] {

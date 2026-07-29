@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   activeReferenceEntries,
   contactMatchStatus,
-  exactSageContactMatches,
   parseSageContactItems,
   parseSageReferenceItems,
+  rankSageContactMatches,
   readinessForInvoice,
   type ReadinessContext,
   type ReadinessInput,
@@ -22,7 +22,7 @@ describe("contact matching", () => {
     expect(contactMatchStatus("a smith", matches)).toBe("ambiguous");
   });
 
-  it("keeps named customer lookups locked to exact Sage contact names", () => {
+  it("ranks an exact Sage contact first without hiding other choices", () => {
     const matches = parseSageContactItems({
       $items: [
         { id: "1", displayed_as: "Tim Hancock" },
@@ -31,7 +31,7 @@ describe("contact matching", () => {
       ],
     });
 
-    expect(exactSageContactMatches("tim hancock", matches).map((match) => match.sage_contact_id)).toEqual(["1"]);
+    expect(rankSageContactMatches("tim hancock", matches).map((match) => match.sage_contact_id)).toEqual(["1", "3", "2"]);
   });
 });
 

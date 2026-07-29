@@ -34,11 +34,11 @@ import {
 import {
   activeReferenceEntries,
   contactMatchStatus,
-  exactSageContactMatches,
   distinctLedgerCodes,
   distinctTaxCodes,
   parseSageContactItems,
   parseSageReferenceItems,
+  rankSageContactMatches,
   readinessForInvoice,
   unnamedCustomerMappingKey,
   type SageReferenceType,
@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260729-2";
+const APP_ASSET_VERSION = "20260729-3";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -573,9 +573,7 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
   const customerName = String(body.customer_name ?? "").trim();
   const normalizedCustomerName = String(body.normalized_customer_name ?? "").trim();
   const isUnnamedCustomerSelection = normalizedCustomerName === unnamedCustomerMappingKey;
-  const searchTerm = isUnnamedCustomerSelection
-    ? String(body.search_query ?? "").trim()
-    : customerName || normalizedCustomerName;
+  const searchTerm = String(body.search_query ?? "").trim() || customerName || normalizedCustomerName;
 
   if (!searchTerm) {
     return jsonResponse({ ok: false, error: "Enter a Sage customer name to search for." }, 400);
@@ -594,11 +592,7 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
     const matchesById = new Map(parseSageContactItems(contactData).map((match) => [match.sage_contact_id, match]));
     const normalized = normalizedCustomerName || normalizeForClient(customerName);
     const returnedMatches = [...matchesById.values()];
-    const matches = (isUnnamedCustomerSelection ? returnedMatches : exactSageContactMatches(normalized, returnedMatches)).sort((left, right) => {
-      const leftExact = left.normalized_display_name === normalized ? 1 : 0;
-      const rightExact = right.normalized_display_name === normalized ? 1 : 0;
-      return rightExact - leftExact || left.sage_contact_display_name.localeCompare(right.sage_contact_display_name);
-    });
+    const matches = rankSageContactMatches(normalized, returnedMatches);
     const matchStatus = contactMatchStatus(normalized, matches);
     console.log("Sage contact search completed", {
       mode: isUnnamedCustomerSelection ? "all_contacts" : "named_search",
@@ -617,12 +611,10 @@ async function handleSageContactSearch(request: Request, env: Env): Promise<Resp
       match_status: matchStatus,
       saved_mapping: savedMappings.find((mapping) => mapping.normalized_customer_name === normalized) ?? null,
       missing_contact_message: matches.length === 0
-        ? isUnnamedCustomerSelection
-          ? "Sage returned no customer contacts for that search."
-          : `No Sage customer named "${customerName}" exists yet. Use Create with TEST details if this is a new customer.`
+        ? `Sage returned no customer contacts matching "${searchTerm}".`
         : matchStatus === "single_exact"
-          ? `Sage customer "${customerName}" was found. Confirm and save it.`
-          : `${matches.length} Sage customers named "${customerName}" were found. Choose the correct one.`,
+          ? `An exact Sage match for "${customerName}" was found and placed first. Confirm it or choose another contact.`
+          : `${matches.length} Sage contact${matches.length === 1 ? "" : "s"} matching "${searchTerm}" were found. Choose the correct one.`,
     });
   } catch (error) {
     if (error instanceof SageAuthorizationError) {
@@ -1870,7 +1862,7 @@ function uploadPage(): string {
                 </div>
                 <button id="addMissingContactsButton" class="secondary-button" type="button" disabled>Add all missing contacts</button>
               </div>
-              <p class="mapping-helper">Search Sage first. If the customer is not there, you can create a customer using the PDF name and temporary TEST address details, then complete the record in Sage later.</p>
+              <p class="mapping-helper">Each search starts with the imported customer name, but you can edit it to find any Sage contact. Exact matches appear first, and saved contacts can be changed later. If the customer is not there, create one with temporary TEST address details and complete the record in Sage later.</p>
               <div id="customerMappingBody" class="mapping-list">
                 <p class="empty-state">No customers found in the reviewed rows yet.</p>
               </div>
@@ -2844,23 +2836,10 @@ table {
   font: inherit;
 }
 
-.contact-lookup-name {
-  min-height: 40px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f5f7f7;
-}
-
-.contact-lookup-name span,
-.contact-lookup-name strong {
-  display: block;
-}
-
-.contact-lookup-name span {
+.contact-search-hint {
   color: var(--muted);
   font-size: 0.78rem;
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .mapping-row button {
@@ -3208,6 +3187,7 @@ let activeDraftPreview = null;
 let activeDraftFingerprint = null;
 let draftPreparationState = "no_invoice_selected";
 const referenceOptionsBySelect = {};
+const editingCustomerMappings = new Set();
 let previewExpanded = false;
 let reconciliationExpanded = false;
 let referenceAutoRefreshAttempted = false;
@@ -3601,18 +3581,43 @@ customerMappingBody.addEventListener("click", async (event) => {
   const searchButton = event.target instanceof Element ? event.target.closest("[data-search-contact]") : null;
   const saveButton = event.target instanceof Element ? event.target.closest("[data-save-contact]") : null;
   const createButton = event.target instanceof Element ? event.target.closest("[data-create-placeholder-contact]") : null;
+  const changeButton = event.target instanceof Element ? event.target.closest("[data-change-contact]") : null;
+  const cancelButton = event.target instanceof Element ? event.target.closest("[data-cancel-contact-change]") : null;
+
+  if (changeButton) {
+    editingCustomerMappings.add(changeButton.dataset.changeContact || "");
+    renderCustomerMappings();
+    return;
+  }
+
+  if (cancelButton) {
+    editingCustomerMappings.delete(cancelButton.dataset.cancelContactChange || "");
+    renderCustomerMappings();
+    return;
+  }
 
   if (searchButton) {
     await searchContact(searchButton.dataset.searchContact || "");
+    return;
   }
 
   if (saveButton) {
     await saveCustomerMapping(saveButton.dataset.saveContact || "");
+    return;
   }
 
   if (createButton) {
     await createPlaceholderContact(createButton.dataset.createPlaceholderContact || "");
   }
+});
+
+customerMappingBody.addEventListener("keydown", (event) => {
+  const queryInput = event.target instanceof Element ? event.target.closest('input[id^="contact-query-"]') : null;
+  if (!queryInput || event.key !== "Enter") {
+    return;
+  }
+  event.preventDefault();
+  queryInput.closest(".mapping-row")?.querySelector("[data-search-contact]")?.click();
 });
 
 addMissingContactsButton.addEventListener("click", createAllMissingContacts);
@@ -4132,45 +4137,50 @@ function renderCustomerMappings() {
 
   customerMappingBody.innerHTML = customers.map((customer) => {
     const saved = sageReferences.customer_mappings.find((mapping) => mapping.normalized_customer_name === customer.normalized);
-    if (saved) {
+    const isChangingSavedContact = Boolean(saved) && editingCustomerMappings.has(customer.normalized);
+    if (saved && !isChangingSavedContact) {
       const savedLabel = saved.postcode === "TEST" ? "Contact added in Sage" : "Available in Sage and saved";
       return '<div class="mapping-row contact-mapped">' +
         '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small><small>Saved contact: ' + escapeHtml(saved.sage_contact_display_name) + '</small></div>' +
         '<div class="contact-linked-details"><span>Sage customer</span><strong>' + escapeHtml(saved.sage_contact_display_name) + '</strong></div>' +
-        '<div class="contact-actions"><span class="contact-saved-status">' + savedLabel + '</span></div>' +
+        '<div class="contact-actions"><span class="contact-saved-status">' + savedLabel + '</span><button class="secondary-button" type="button" data-change-contact="' + escapeHtml(customer.normalized) + '">Change contact</button></div>' +
         '</div>';
     }
     const matches = [...(customer.matches || [])];
     const contactOptions = matches.map((match) =>
-      '<option value="' + escapeHtml(match.sage_contact_id) + '" data-contact-display-name="' + escapeHtml(match.sage_contact_display_name) + '">' + escapeHtml(match.sage_contact_display_name) + (match.email ? " - " + escapeHtml(match.email) : "") + '</option>'
+      '<option value="' + escapeHtml(match.sage_contact_id) + '" data-contact-display-name="' + escapeHtml(match.sage_contact_display_name) + '">' +
+        (match.normalized_display_name === customer.normalized ? "Suggested exact match: " : "") + escapeHtml(match.sage_contact_display_name) +
+        (match.postcode ? " - " + escapeHtml(match.postcode) : "") +
+        (match.email ? " - " + escapeHtml(match.email) : "") +
+      '</option>'
     ).join("");
     const hasMatches = matches.length > 0;
     const isUnnamedCustomer = customer.normalized === "__unnamed_customer__";
-    const contactQuery = customer.search_query || "";
+    const contactQuery = customer.search_query || (isUnnamedCustomer ? "" : customer.name);
     const emptyOption = customer.search_attempted
-      ? (isUnnamedCustomer ? "No Sage contacts found" : "No exact Sage customer found")
-      : (isUnnamedCustomer ? "Search Sage to load contacts" : "Not checked in Sage yet");
+      ? "No Sage contacts found"
+      : "Search Sage to load contacts";
     const select = '<div class="contact-picker">' +
-      (isUnnamedCustomer
-        ? '<input type="search" id="contact-query-' + slug(customer.normalized) + '" value="' + escapeHtml(contactQuery) + '" placeholder="Enter a Sage customer name">'
-        : '<div class="contact-lookup-name"><span>Checking Sage only for</span><strong>' + escapeHtml(customer.name) + '</strong></div>') +
+      '<input type="search" id="contact-query-' + slug(customer.normalized) + '" value="' + escapeHtml(contactQuery) + '" placeholder="Enter any Sage customer name">' +
+      '<small class="contact-search-hint">' + (isUnnamedCustomer ? "Search by any Sage customer name." : "The imported name is suggested. Edit it to search for any Sage contact; exact matches appear first.") + '</small>' +
       (hasMatches
         ? '<select id="contact-' + slug(customer.normalized) + '"><option value="">Choose Sage contact</option>' + contactOptions + '</select>'
         : '<select id="contact-' + slug(customer.normalized) + '" disabled><option>' + emptyOption + '</option></select>') +
       '</div>';
-    const matchText = customer.match_status === "ambiguous"
+    const matchText = matches.length > 1
       ? '<small>Multiple possible matches. Please choose manually.</small>'
       : customer.missing_contact_message
         ? '<small>' + escapeHtml(customer.missing_contact_message) + '</small>'
         : "";
-    const canCreatePlaceholder = customer.normalized !== "__unnamed_customer__";
+    const canCreatePlaceholder = customer.normalized !== "__unnamed_customer__" && !saved;
 
-    return '<div class="mapping-row">' +
-      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small><small>Not mapped yet</small>' + matchText + '</div>' +
+    return '<div class="mapping-row' + (saved ? ' contact-mapped' : '') + '">' +
+      '<div><strong>' + escapeHtml(customer.name) + '</strong><small>' + escapeHtml(customer.normalized) + '</small><small>' + (saved ? 'Currently mapped to: ' + escapeHtml(saved.sage_contact_display_name) : 'Not mapped yet') + '</small>' + matchText + '</div>' +
       select +
       '<div class="contact-actions">' +
-        '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">' + (isUnnamedCustomer ? "Search Sage contacts" : "Check Sage for this customer") + '</button>' +
-        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>Save contact</button>' +
+        '<button class="secondary-button" type="button" data-search-contact="' + escapeHtml(customer.normalized) + '">Search Sage contacts</button>' +
+        '<button type="button" data-save-contact="' + escapeHtml(customer.normalized) + '"' + (hasMatches ? "" : " disabled") + '>' + (saved ? 'Save replacement' : 'Save contact') + '</button>' +
+        (saved ? '<button class="secondary-button" type="button" data-cancel-contact-change="' + escapeHtml(customer.normalized) + '">Cancel</button>' : '') +
         (canCreatePlaceholder ? '<button class="secondary-button placeholder-contact-button" type="button" data-create-placeholder-contact="' + escapeHtml(customer.normalized) + '">Create with TEST details</button>' : '') +
       '</div>' +
       '</div>';
@@ -4270,11 +4280,8 @@ async function searchContact(normalizedCustomerName) {
   if (!customer) {
     return;
   }
-  const isUnnamedCustomer = normalizedCustomerName === "__unnamed_customer__";
-  const queryInput = isUnnamedCustomer
-    ? customerMappingBody.querySelector("#contact-query-" + cssEscape(slug(normalizedCustomerName)))
-    : null;
-  const searchQuery = isUnnamedCustomer ? String(queryInput?.value || "").trim() : customer.name;
+  const queryInput = customerMappingBody.querySelector("#contact-query-" + cssEscape(slug(normalizedCustomerName)));
+  const searchQuery = String(queryInput?.value || "").trim();
   if (!searchQuery) {
     renderMappingNotice("error", "Enter a Sage customer name to search for.");
     queryInput?.focus();
@@ -4323,7 +4330,7 @@ async function searchContact(normalizedCustomerName) {
     window.clearTimeout(timeout);
     if (button && button.isConnected) {
       button.disabled = false;
-      button.textContent = isUnnamedCustomer ? "Search Sage contacts" : "Check Sage for this customer";
+      button.textContent = "Search Sage contacts";
     }
   }
 }
@@ -4463,7 +4470,7 @@ async function saveCustomerMapping(normalizedCustomerName) {
     body: JSON.stringify({
       normalized_customer_name: normalizedCustomerName,
       sage_contact_id: select.value,
-      sage_contact_display_name: option.textContent,
+      sage_contact_display_name: option.dataset.contactDisplayName || option.textContent,
     }),
   });
   const result = await response.json();
@@ -4480,7 +4487,8 @@ async function saveCustomerMapping(normalizedCustomerName) {
       needs_completion: false,
     });
   }
-  renderMappingNotice("success", "Customer mapping saved. This contact will be reused for future imports.");
+  editingCustomerMappings.delete(normalizedCustomerName);
+  renderMappingNotice("success", "Customer mapping saved. This Sage contact will be reused for future imports, and can be changed again at any time.");
   renderCustomerMappings();
   await refreshSageReadiness();
 }

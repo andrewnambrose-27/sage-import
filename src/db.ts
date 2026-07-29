@@ -280,10 +280,8 @@ export class ImportDatabase {
       this.db.prepare(
         `DELETE FROM customer_mappings
          WHERE sage_business_id = ?
-           AND normalized_customer_name = ?
-           AND COALESCE(customer_email, '') = ?
-           AND COALESCE(postcode, '') = ?`,
-      ).bind(input.sage_business_id, input.normalized_customer_name, input.customer_email ?? "", input.postcode ?? ""),
+           AND normalized_customer_name = ?`,
+      ).bind(input.sage_business_id, input.normalized_customer_name),
       this.db.prepare(
         `INSERT INTO customer_mappings (
           id, sage_business_id, normalized_customer_name, customer_email, postcode, sage_contact_id,
