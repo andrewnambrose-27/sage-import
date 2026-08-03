@@ -421,7 +421,27 @@ export class ImportDatabase {
   async reserveSageImport(sourceInvoiceId: string, sageContactId: string): Promise<SageImportReservation> {
     const existing = await this.getSageImport(sourceInvoiceId);
     if (existing) {
-      return { reserved: false, record: existing };
+      if (existing.import_status !== "failed") {
+        return { reserved: false, record: existing };
+      }
+
+      const retriedAt = new Date().toISOString();
+      const retry = await this.db.prepare(
+        `UPDATE sage_imports
+         SET sage_contact_id = ?, sage_invoice_id = NULL, import_status = 'pending',
+             attempt_count = attempt_count + 1, error_code = NULL, safe_error_message = NULL,
+             updated_at = ?
+         WHERE source_invoice_id = ? AND import_status = 'failed'`,
+      ).bind(sageContactId, retriedAt, sourceInvoiceId).run();
+      if (retry.meta.changes === 1) {
+        const retried = await this.getSageImport(sourceInvoiceId);
+        if (!retried) throw new Error("The retried Sage import reservation could not be read.");
+        return { reserved: true, record: retried };
+      }
+
+      const concurrent = await this.getSageImport(sourceInvoiceId);
+      if (!concurrent) throw new Error("The Sage import reservation disappeared during retry.");
+      return { reserved: false, record: concurrent };
     }
 
     const now = new Date().toISOString();

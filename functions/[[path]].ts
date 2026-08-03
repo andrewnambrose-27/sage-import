@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-4";
+const APP_ASSET_VERSION = "20260803-5";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -939,8 +939,10 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
     });
   } catch (error) {
     if (error instanceof SageDraftInvoiceRequestError) {
-      await database.value.markSageImportFailed(prepared.sourceInvoiceId, "Sage rejected the draft invoice. Review the preview and Sage mappings before trying again.", `sage_${error.status}`);
-      return jsonResponse({ ok: false, error: "Sage rejected the draft invoice. No draft was confirmed as created." }, 502);
+      const detail = error.detail ? ` Sage says: ${error.detail}` : "";
+      const message = `Sage rejected the draft invoice.${detail} No draft was created.`;
+      await database.value.markSageImportFailed(prepared.sourceInvoiceId, message, `sage_${error.status}`);
+      return jsonResponse({ ok: false, error: message }, error.status);
     }
     if (error instanceof SageAuthorizationError) {
       await database.value.markSageImportFailed(prepared.sourceInvoiceId, "Reconnect Sage before creating a draft invoice.", "authorization_error");
@@ -5765,7 +5767,20 @@ async function previewSelectedDraftInvoices() {
           due_date: draftDueDates.get(invoice.sourceInvoiceId),
         }),
       });
-      const result = await response.json();
+      const responseBody = await response.text();
+      let result = null;
+      try {
+        result = responseBody ? JSON.parse(responseBody) : null;
+      } catch {
+        result = null;
+      }
+      if (!result) {
+        failures.push({
+          invoiceNumber: invoice.invoiceNumber,
+          error: "The draft check returned no readable details (HTTP " + response.status + ").",
+        });
+        continue;
+      }
       if (!response.ok || !result.ok) {
         failures.push({ invoiceNumber: invoice.invoiceNumber, error: result.error || "This invoice cannot be prepared as a Sage draft." });
         continue;
@@ -5829,7 +5844,25 @@ async function createSelectedDraftInvoices() {
           confirmed: true,
         }),
       });
-      const result = await response.json();
+      const responseBody = await response.text();
+      let result = null;
+      try {
+        result = responseBody ? JSON.parse(responseBody) : null;
+      } catch {
+        result = null;
+      }
+      if (!result) {
+        results.push({
+          ok: false,
+          invoiceNumber: item.invoiceNumber,
+          uncertain: response.ok,
+          message: response.ok
+            ? "Sage returned an unreadable success response. Check Sage for this invoice before trying again."
+            : "The draft request failed with HTTP " + response.status + " but returned no readable details.",
+        });
+        renderDraftBatchResults(results, count);
+        continue;
+      }
       if (!response.ok || !result.ok) {
         results.push({ ok: false, invoiceNumber: item.invoiceNumber, message: result.error || "Sage rejected this draft invoice." });
       } else {

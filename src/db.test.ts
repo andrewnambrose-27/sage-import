@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DuplicateSourceInvoiceError,
+  ImportDatabase,
   assertUniqueSourceHashes,
   buildSourceInvoiceRecord,
   hashSourceInvoice,
@@ -9,6 +10,7 @@ import {
   normalizeCustomerName,
   parseCachedReferenceJson,
   type PersistableSourceInvoice,
+  type SageImportRecord,
 } from "./db";
 
 describe("moneyToMinorUnits", () => {
@@ -108,6 +110,61 @@ describe("normalizeCustomerName", () => {
 describe("cached Sage reference JSON", () => {
   it("handles malformed cached JSON without breaking reference loading", () => {
     expect(parseCachedReferenceJson("{not-json")).toEqual({});
+  });
+});
+
+describe("Sage import reservations", () => {
+  it("allows a definitive failed attempt to retry but keeps the new pending reservation protected", async () => {
+    let record: SageImportRecord = {
+      id: "import-1",
+      source_invoice_id: "source-1",
+      sage_contact_id: "contact-old",
+      sage_invoice_id: null,
+      import_status: "failed",
+      attempt_count: 1,
+      error_code: "sage_422",
+      safe_error_message: "Sage rejected the draft invoice.",
+      created_at: "2026-08-03T14:51:50.922Z",
+      updated_at: "2026-08-03T14:51:51.821Z",
+    };
+    const database = new ImportDatabase({
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async first() {
+                return record;
+              },
+              async run() {
+                if (!sql.startsWith("UPDATE sage_imports") || record.import_status !== "failed") {
+                  return { meta: { changes: 0 } };
+                }
+                record = {
+                  ...record,
+                  sage_contact_id: String(values[0]),
+                  sage_invoice_id: null,
+                  import_status: "pending",
+                  attempt_count: record.attempt_count + 1,
+                  error_code: null,
+                  safe_error_message: null,
+                  updated_at: String(values[1]),
+                };
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as D1Database);
+
+    await expect(database.reserveSageImport("source-1", "contact-new")).resolves.toMatchObject({
+      reserved: true,
+      record: { import_status: "pending", attempt_count: 2, sage_contact_id: "contact-new" },
+    });
+    await expect(database.reserveSageImport("source-1", "contact-new")).resolves.toMatchObject({
+      reserved: false,
+      record: { import_status: "pending", attempt_count: 2 },
+    });
   });
 });
 

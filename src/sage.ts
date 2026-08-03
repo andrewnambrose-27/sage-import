@@ -657,9 +657,49 @@ export async function createSageDraftInvoice(client: SageApiClient, payload: unk
     if (status >= 500) {
       throw new SageUncertainResultError();
     }
-    throw new SageDraftInvoiceRequestError(status);
+    throw new SageDraftInvoiceRequestError(status, await sageRequestErrorDetail(response));
   }
   return response.json();
+}
+
+async function sageRequestErrorDetail(response: Response): Promise<string | null> {
+  let body: unknown;
+  try {
+    const text = await response.text();
+    if (!text.trim()) return null;
+    body = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+
+  const messages: string[] = [];
+  collectSageErrorMessages(body, false, messages);
+  const detail = [...new Set(messages.map((message) => message.replace(/\s+/g, " ").trim()).filter(Boolean))]
+    .join(" ")
+    .slice(0, 500);
+  return detail || null;
+}
+
+function collectSageErrorMessages(value: unknown, insideErrorContainer: boolean, messages: string[]): void {
+  if (typeof value === "string") {
+    if (insideErrorContainer) messages.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectSageErrorMessages(item, insideErrorContainer, messages));
+    return;
+  }
+  if (!isRecord(value)) return;
+
+  for (const [key, item] of Object.entries(value)) {
+    const isMessage = /^(?:\$?message|error|detail|description)$/i.test(key);
+    const isErrorContainer = insideErrorContainer || /^(?:\$?errors?|validation_errors?|details)$/i.test(key);
+    if (typeof item === "string" && (isMessage || isErrorContainer)) {
+      messages.push(item);
+    } else if (isMessage || isErrorContainer || typeof item === "object") {
+      collectSageErrorMessages(item, isErrorContainer, messages);
+    }
+  }
 }
 
 export class SageUncertainResultError extends Error {
@@ -670,7 +710,7 @@ export class SageUncertainResultError extends Error {
 }
 
 export class SageDraftInvoiceRequestError extends Error {
-  constructor(public readonly status: number) {
+  constructor(public readonly status: number, public readonly detail: string | null = null) {
     super("Sage rejected the draft invoice.");
     this.name = "SageDraftInvoiceRequestError";
   }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SageApiClient,
   SageAuthorizationError,
+  SageDraftInvoiceRequestError,
   buildSagePlaceholderCustomerPayload,
   SageReferenceFetchError,
   SageResponseShapeError,
@@ -373,6 +374,22 @@ describe("Sage draft invoices", () => {
     expect(String(request[0])).toBe("https://api.accounting.sage.com/v3.1/sales_invoices");
     expect(request[1]?.method).toBe("POST");
     expect(JSON.parse(String(request[1]?.body))).toEqual(payload);
+  });
+
+  it("preserves Sage's safe validation message when a draft is rejected", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => jsonResponse({
+      $severity: "error",
+      $message: "Invoice line tax rate is not valid for this contact.",
+      ignored_payload_echo: "customer-private-data",
+    }, { status: 422 })) as unknown as typeof fetch;
+
+    await expect(createSageDraftInvoice(new SageApiClient(store, config, fetcher), {})).rejects.toMatchObject({
+      name: "SageDraftInvoiceRequestError",
+      status: 422,
+      detail: "Invoice line tax rate is not valid for this contact.",
+    } satisfies Partial<SageDraftInvoiceRequestError>);
   });
 });
 
