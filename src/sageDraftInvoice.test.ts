@@ -27,6 +27,7 @@ describe("Sage draft invoice payload", () => {
         contact_id: "contact-1",
         date: "2026-07-01",
         due_date: "2026-07-31",
+        status_id: "DRAFT",
         reference: "RM inv no.4632",
         invoice_lines: [
           { description: "Removal service", quantity: 1, unit_price: 100.1, tax_amount: 20.02, ledger_account_id: "ledger-1", tax_rate_id: "tax-1", eu_goods_services_type_id: "2" },
@@ -63,6 +64,7 @@ describe("Sage draft invoice payload", () => {
     const compatiblePayload = omitSageDueDate(preview.payload);
 
     expect(compatiblePayload.sales_invoice).not.toHaveProperty("due_date");
+    expect(compatiblePayload.sales_invoice.status_id).toBe("DRAFT");
     expect(preview.payload.sales_invoice.due_date).toBe("2026-07-31");
   });
 

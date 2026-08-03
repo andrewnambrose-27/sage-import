@@ -349,6 +349,7 @@ describe("Sage draft invoices", () => {
         contact_id: "contact-1",
         date: "2026-05-22",
         due_date: "2026-06-21",
+        status_id: "DRAFT" as const,
         reference: "RM inv no.4630",
         invoice_lines: [{
           description: "Removal",
@@ -369,7 +370,9 @@ describe("Sage draft invoices", () => {
     const firstBody = JSON.parse(String(vi.mocked(fetcher).mock.calls[0][1]?.body));
     const secondBody = JSON.parse(String(vi.mocked(fetcher).mock.calls[1][1]?.body));
     expect(firstBody.sales_invoice.due_date).toBe("2026-06-21");
+    expect(firstBody.sales_invoice.status_id).toBe("DRAFT");
     expect(secondBody.sales_invoice).not.toHaveProperty("due_date");
+    expect(secondBody.sales_invoice.status_id).toBe("DRAFT");
   });
 
   it("requests the invoice reference needed for duplicate protection", async () => {
@@ -399,6 +402,7 @@ describe("Sage draft invoices", () => {
         contact_id: "contact-1",
         date: "2026-08-01",
         due_date: "2026-08-31",
+        status_id: "DRAFT",
         reference: "RM inv no.4632",
         invoice_lines: [{
           description: "Removal service",

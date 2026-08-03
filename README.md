@@ -8,6 +8,7 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 
 - Password-protected login screen
 - `APP_ACCESS_PASSWORD` environment secret
+- Separate `SAGE_CONNECTION_ACCESS_PASSWORD` secret for reconnect/disconnect controls
 - Signed HTTP-only session cookie
 - Logout button
 - Protected dashboard
@@ -45,6 +46,7 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 
    ```bash
    APP_ACCESS_PASSWORD=your-private-password
+   SAGE_CONNECTION_ACCESS_PASSWORD=a-different-password-for-sage-connection-controls
    ```
 
 4. If testing Sage OAuth locally, also set:
@@ -69,6 +71,7 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 For Cloudflare Pages, add these secrets:
 
 - `APP_ACCESS_PASSWORD`
+- `SAGE_CONNECTION_ACCESS_PASSWORD`
 - `SAGE_CLIENT_SECRET`
 - `SAGE_TOKEN_ENCRYPTION_KEY`
 
@@ -87,6 +90,7 @@ Add the password using Wrangler:
 
 ```bash
 npx wrangler pages secret put APP_ACCESS_PASSWORD --project-name sage-import
+npx wrangler pages secret put SAGE_CONNECTION_ACCESS_PASSWORD --project-name sage-import
 ```
 
 Add the Sage secrets using Wrangler:
@@ -189,7 +193,13 @@ The draft workflow remains review-led:
 
 The browser creates the selected drafts sequentially, up to 25 per batch, using the duplicate-safe single-invoice endpoint. It reports created, existing, rejected and uncertain results beside each invoice, so a partial Sage failure never hides which drafts completed.
 
-The app uses `POST /v3.1/sales_invoices` with the official Sage `sales_invoice` request wrapper. It sends `contact_id`, `date`, `due_date`, `reference`, and `invoice_lines`, each with `description`, `quantity`, `unit_price`, the exact `tax_amount`, `ledger_account_id`, `tax_rate_id`, and Sage's service marker (`eu_goods_services_type_id: "2"`). It does not call any release, send, email or publish endpoint.
+The app uses `POST /v3.1/sales_invoices` with the official Sage `sales_invoice` request wrapper. It explicitly sends `status_id: "DRAFT"` together with `contact_id`, `date`, `due_date`, `reference`, and `invoice_lines`, each with `description`, `quantity`, `unit_price`, the exact `tax_amount`, `ledger_account_id`, `tax_rate_id`, and Sage's service marker (`eu_goods_services_type_id: "2"`). It does not call any release, send, email or publish endpoint.
+
+## Sage Connection Control Lock
+
+Connecting, reconnecting and disconnecting Sage require a separate password held in the Cloudflare Pages secret `SAGE_CONNECTION_ACCESS_PASSWORD`. The unlock is stored in a signed, HTTP-only cookie for 30 minutes and can be locked again immediately from the Sage connection card. It protects connection management only, so review-led customer and draft creation can continue through an existing connection without sharing the connection password.
+
+If the secret is not configured, connection controls fail closed: the current stored Sage connection remains usable for imports, but it cannot be replaced or disconnected through the app.
 
 Before creation, the app searches every matching Sage page using the `RM inv no.<number>` reference and explicitly requests the `reference` attribute, then reserves the source invoice in D1 using the unique `sage_imports.source_invoice_id` constraint. A confirmed Sage ID is saved as `created`. A network timeout, server error, or response without an ID is recorded as `uncertain` and is never retried automatically; check Sage first. A Sage validation rejection is recorded as `failed`.
 

@@ -48,6 +48,7 @@ import { assertDraftCreationSafety, buildSageDraftInvoice, draftPreviewFingerpri
 
 interface Env {
   APP_ACCESS_PASSWORD?: string;
+  SAGE_CONNECTION_ACCESS_PASSWORD?: string;
   SAGE_CLIENT_ID?: string;
   SAGE_CLIENT_SECRET?: string;
   SAGE_REDIRECT_URI?: string;
@@ -57,9 +58,11 @@ interface Env {
 
 const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
+const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-11";
+const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 30 * 60;
+const APP_ASSET_VERSION = "20260803-12";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -96,9 +99,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }
 
       if (url.pathname === "/logout" && request.method === "POST") {
-        return redirect("/login", {
-          "Set-Cookie": clearSessionCookie(url.protocol === "https:"),
-        });
+        return redirectWithCookies("/login", [
+          clearSessionCookie(url.protocol === "https:"),
+          clearCookie(SAGE_CONNECTION_ACCESS_COOKIE, url.protocol === "https:"),
+        ]);
       }
 
       // Sage returns here from a third-party domain. The short-lived OAuth state
@@ -119,16 +123,24 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         return handleImportBatchSave(request, env);
       }
 
+      if (url.pathname === "/api/sage/connection-access/unlock" && request.method === "POST") {
+        return handleSageConnectionUnlock(request, env);
+      }
+
+      if (url.pathname === "/api/sage/connection-access/lock" && request.method === "POST") {
+        return handleSageConnectionLock(request);
+      }
+
       if (url.pathname === "/api/sage/connect" && request.method === "GET") {
         return handleSageConnect(request, env);
       }
 
       if (url.pathname === "/api/sage/disconnect" && request.method === "POST") {
-        return handleSageDisconnect(env);
+        return handleSageDisconnect(request, env);
       }
 
       if (url.pathname === "/api/sage/status" && request.method === "GET") {
-        return handleSageStatus(env);
+        return handleSageStatus(request, env);
       }
 
       if (url.pathname === "/api/sage/references" && request.method === "GET") {
@@ -319,7 +331,44 @@ async function handleImportBatchSave(request: Request, env: Env): Promise<Respon
   }
 }
 
+async function handleSageConnectionUnlock(request: Request, env: Env): Promise<Response> {
+  const configuredPassword = env.SAGE_CONNECTION_ACCESS_PASSWORD;
+  if (!configuredPassword) {
+    return jsonResponse({
+      ok: false,
+      error: "SAGE_CONNECTION_ACCESS_PASSWORD is not configured for this deployment.",
+    }, 503);
+  }
+
+  const body = await request.json() as { password?: string };
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!(await secureSecretEqual(password, configuredPassword))) {
+    return jsonResponse({ ok: false, error: "That Sage connection password was not recognised." }, 401);
+  }
+
+  const secure = new URL(request.url).protocol === "https:";
+  return jsonResponse({
+    ok: true,
+    connection_unlocked: true,
+    expires_in_seconds: SAGE_CONNECTION_ACCESS_TTL_SECONDS,
+  }, 200, {
+    "Set-Cookie": await createSageConnectionAccessCookie(configuredPassword, secure),
+  });
+}
+
+function handleSageConnectionLock(request: Request): Response {
+  const secure = new URL(request.url).protocol === "https:";
+  return jsonResponse({ ok: true, connection_unlocked: false }, 200, {
+    "Set-Cookie": clearCookie(SAGE_CONNECTION_ACCESS_COOKIE, secure),
+  });
+}
+
 async function handleSageConnect(request: Request, env: Env): Promise<Response> {
+  if (!(await isSageConnectionUnlocked(request, env))) {
+    const result = env.SAGE_CONNECTION_ACCESS_PASSWORD ? "connection_locked" : "connection_lock_not_configured";
+    return sageCallbackRedirect(result, {});
+  }
+
   const config = sageConfigFromEnv(env);
   if (!config.ok) {
     return jsonResponse({ ok: false, error: config.error }, 503);
@@ -394,7 +443,11 @@ async function handleSageCallback(request: Request, env: Env): Promise<Response>
   }
 }
 
-async function handleSageDisconnect(env: Env): Promise<Response> {
+async function handleSageDisconnect(request: Request, env: Env): Promise<Response> {
+  if (!(await isSageConnectionUnlocked(request, env))) {
+    return jsonResponse({ ok: false, error: "Unlock the Sage connection controls before disconnecting Sage." }, 403);
+  }
+
   if (!env.DB) {
     return jsonResponse({ ok: false, error: "D1 database is not configured yet." }, 503);
   }
@@ -404,7 +457,9 @@ async function handleSageDisconnect(env: Env): Promise<Response> {
   return jsonResponse({ ok: true, connected: false });
 }
 
-async function handleSageStatus(env: Env): Promise<Response> {
+async function handleSageStatus(request: Request, env: Env): Promise<Response> {
+  const connectionLockConfigured = Boolean(env.SAGE_CONNECTION_ACCESS_PASSWORD);
+  const connectionUnlocked = await isSageConnectionUnlocked(request, env);
   if (!env.DB) {
     return jsonResponse({
       connected: false,
@@ -413,12 +468,19 @@ async function handleSageStatus(env: Env): Promise<Response> {
       last_refreshed_at: null,
       reauthorization_required: false,
       storage_configured: false,
+      connection_lock_configured: connectionLockConfigured,
+      connection_unlocked: connectionUnlocked,
     });
   }
 
   const store = new D1SageConnectionStore(env.DB);
   const status = safeStatusFromConnection(await store.getActiveConnection());
-  return jsonResponse({ ...status, storage_configured: true });
+  return jsonResponse({
+    ...status,
+    storage_configured: true,
+    connection_lock_configured: connectionLockConfigured,
+    connection_unlocked: connectionUnlocked,
+  });
 }
 
 async function activeSageBusinessId(env: Env): Promise<string | null> {
@@ -1258,6 +1320,69 @@ async function createSessionCookie(secret: string, secure: boolean): Promise<str
   return attributes.join("; ");
 }
 
+async function isSageConnectionUnlocked(request: Request, env: Env): Promise<boolean> {
+  const configuredPassword = env.SAGE_CONNECTION_ACCESS_PASSWORD;
+  if (!configuredPassword) {
+    return false;
+  }
+
+  const cookie = getCookie(request.headers.get("Cookie") ?? "", SAGE_CONNECTION_ACCESS_COOKIE);
+  if (!cookie) {
+    return false;
+  }
+
+  const [payload, signature] = cookie.split(".");
+  if (!payload || !signature) {
+    return false;
+  }
+
+  const expectedSignature = await sign(payload, configuredPassword);
+  if (!constantTimeEqual(signature, expectedSignature)) {
+    return false;
+  }
+
+  try {
+    const access = JSON.parse(atobUrl(payload)) as { exp?: number };
+    return typeof access.exp === "number" && access.exp > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+async function createSageConnectionAccessCookie(secret: string, secure: boolean): Promise<string> {
+  const payload = btoaUrl(
+    JSON.stringify({
+      exp: Math.floor(Date.now() / 1000) + SAGE_CONNECTION_ACCESS_TTL_SECONDS,
+      nonce: crypto.randomUUID(),
+    }),
+  );
+  const signature = await sign(payload, secret);
+  const attributes = [
+    `${SAGE_CONNECTION_ACCESS_COOKIE}=${payload}.${signature}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${SAGE_CONNECTION_ACCESS_TTL_SECONDS}`,
+  ];
+
+  if (secure) {
+    attributes.push("Secure");
+  }
+
+  return attributes.join("; ");
+}
+
+async function secureSecretEqual(provided: string, expected: string): Promise<boolean> {
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual(left: ArrayBuffer | ArrayBufferView, right: ArrayBuffer | ArrayBufferView): boolean;
+  };
+  return subtle.timingSafeEqual(providedHash, expectedHash);
+}
+
 function clearSessionCookie(secure: boolean): string {
   return clearCookie(SESSION_COOKIE, secure);
 }
@@ -1440,6 +1565,14 @@ function redirect(location: string, headers: Record<string, string> = {}): Respo
       ...headers,
     },
   });
+}
+
+function redirectWithCookies(location: string, cookies: string[]): Response {
+  const headers = new Headers({ Location: location });
+  for (const cookie of cookies) {
+    headers.append("Set-Cookie", cookie);
+  }
+  return new Response(null, { status: 303, headers });
 }
 
 function sageCallbackRedirect(result: string, headers: Record<string, string>): Response {
@@ -1638,10 +1771,22 @@ function uploadPage(): string {
             <p id="sageStatusText">Checking Sage connection status...</p>
           </div>
           <div class="sage-actions">
-            <a id="sageConnectLink" class="button-link" href="/api/sage/connect">Connect Sage</a>
-            <button id="sageDisconnectButton" class="secondary-button" type="button" disabled>Disconnect Sage</button>
+            <button id="sageConnectionLockButton" type="button">Unlock Sage controls</button>
+            <a id="sageConnectLink" class="button-link" href="/api/sage/connect" hidden>Connect Sage</a>
+            <button id="sageDisconnectButton" class="secondary-button" type="button" disabled hidden>Disconnect Sage</button>
           </div>
-          <p class="sage-note">Sage actions remain review-led. Customers and draft invoices are created only after an explicit confirmation.</p>
+          <div id="sageConnectionUnlockPanel" class="sage-unlock-panel" hidden>
+            <div>
+              <label for="sageConnectionPassword">Sage connection password</label>
+              <input id="sageConnectionPassword" type="password" autocomplete="current-password">
+            </div>
+            <div class="sage-unlock-actions">
+              <button id="sageConnectionUnlockButton" type="button">Unlock for 30 minutes</button>
+              <button id="sageConnectionUnlockCancelButton" class="secondary-button" type="button">Cancel</button>
+            </div>
+            <p id="sageConnectionLockMessage" role="status"></p>
+          </div>
+          <p class="sage-note">Connection controls use a separate password. Locking them protects reconnecting or disconnecting Sage; confirmed customer and draft actions can continue through the existing connection.</p>
         </section>
 
         <section class="upload-workflow" aria-labelledby="upload-title">
@@ -2345,6 +2490,53 @@ h2 {
   flex-wrap: wrap;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.sage-unlock-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px 16px;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid rgba(15, 107, 91, 0.28);
+  border-radius: 8px;
+  background: #f1faf7;
+}
+
+.sage-unlock-panel label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--sage-dark);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.sage-unlock-panel input {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+}
+
+.sage-unlock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+#sageConnectionLockMessage {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+#sageConnectionLockMessage.error {
+  color: var(--danger);
 }
 
 .button-link {
@@ -3664,8 +3856,13 @@ tr.risky-row.high-risk {
   .file-card label,
   .sage-actions .button-link,
   .sage-actions button,
+  .sage-unlock-actions button,
   .button-row button {
     width: 100%;
+  }
+
+  .sage-unlock-panel {
+    grid-template-columns: 1fr;
   }
 }
 `;
@@ -3697,6 +3894,12 @@ const reviewSaveNotice = document.querySelector("#reviewSaveNotice");
 const sageStatusText = document.querySelector("#sageStatusText");
 const sageConnectLink = document.querySelector("#sageConnectLink");
 const sageDisconnectButton = document.querySelector("#sageDisconnectButton");
+const sageConnectionLockButton = document.querySelector("#sageConnectionLockButton");
+const sageConnectionUnlockPanel = document.querySelector("#sageConnectionUnlockPanel");
+const sageConnectionPassword = document.querySelector("#sageConnectionPassword");
+const sageConnectionUnlockButton = document.querySelector("#sageConnectionUnlockButton");
+const sageConnectionUnlockCancelButton = document.querySelector("#sageConnectionUnlockCancelButton");
+const sageConnectionLockMessage = document.querySelector("#sageConnectionLockMessage");
 const refreshSageReferencesButton = document.querySelector("#refreshSageReferencesButton");
 const sageReferenceDiagnostics = document.querySelector("#sageReferenceDiagnostics");
 const sageReferenceDiagnosticsBody = document.querySelector("#sageReferenceDiagnosticsBody");
@@ -3746,6 +3949,7 @@ let previewExpanded = false;
 let reconciliationExpanded = false;
 let customerMappingsExpanded = false;
 let referenceAutoRefreshAttempted = false;
+let sageConnectionUnlocked = false;
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -4054,6 +4258,87 @@ draftCreateButton.addEventListener("click", async () => {
     return;
   }
   await createSelectedDraftInvoices();
+});
+
+sageConnectionLockButton.addEventListener("click", async () => {
+  if (!sageConnectionUnlocked) {
+    sageConnectionUnlockPanel.hidden = false;
+    sageConnectionLockMessage.className = "";
+    sageConnectionLockMessage.textContent = "Enter the separate Sage connection password.";
+    sageConnectionPassword.focus();
+    return;
+  }
+
+  sageConnectionLockButton.disabled = true;
+  try {
+    const response = await fetch("/api/sage/connection-access/lock", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      sageConnectionLockMessage.className = "error";
+      sageConnectionLockMessage.textContent = result.error || "The Sage connection controls could not be locked.";
+      return;
+    }
+    sageConnectionPassword.value = "";
+    sageConnectionUnlockPanel.hidden = true;
+    await loadSageStatus();
+  } catch (error) {
+    sageConnectionLockMessage.className = "error";
+    sageConnectionLockMessage.textContent = "The Sage connection controls could not be locked.";
+    console.error(error);
+  } finally {
+    sageConnectionLockButton.disabled = false;
+  }
+});
+
+sageConnectionUnlockCancelButton.addEventListener("click", () => {
+  sageConnectionPassword.value = "";
+  sageConnectionUnlockPanel.hidden = true;
+  sageConnectionLockMessage.className = "";
+  sageConnectionLockMessage.textContent = "";
+});
+
+sageConnectionUnlockButton.addEventListener("click", async () => {
+  const password = sageConnectionPassword.value;
+  if (!password) {
+    sageConnectionLockMessage.className = "error";
+    sageConnectionLockMessage.textContent = "Enter the Sage connection password.";
+    sageConnectionPassword.focus();
+    return;
+  }
+
+  sageConnectionUnlockButton.disabled = true;
+  sageConnectionUnlockButton.textContent = "Unlocking...";
+  try {
+    const response = await fetch("/api/sage/connection-access/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      sageConnectionLockMessage.className = "error";
+      sageConnectionLockMessage.textContent = result.error || "The Sage connection controls could not be unlocked.";
+      sageConnectionPassword.select();
+      return;
+    }
+    sageConnectionPassword.value = "";
+    sageConnectionUnlockPanel.hidden = true;
+    await loadSageStatus();
+  } catch (error) {
+    sageConnectionLockMessage.className = "error";
+    sageConnectionLockMessage.textContent = "The Sage connection controls could not be unlocked.";
+    console.error(error);
+  } finally {
+    sageConnectionUnlockButton.disabled = false;
+    sageConnectionUnlockButton.textContent = "Unlock for 30 minutes";
+  }
+});
+
+sageConnectionPassword.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    sageConnectionUnlockButton.click();
+  }
 });
 
 sageDisconnectButton.addEventListener("click", async () => {
@@ -6210,8 +6495,15 @@ async function loadSageStatus() {
       return;
     }
 
+    renderSageConnectionAccess(status);
+    const accessSuffix = !status.connection_lock_configured
+      ? " The separate Sage connection password is not configured."
+      : status.connection_unlocked
+        ? " Connection controls are unlocked for 30 minutes."
+        : " Connection controls are locked.";
+
     if (!status.storage_configured) {
-      sageStatusText.textContent = "D1 is not configured yet, so Sage cannot be connected.";
+      sageStatusText.textContent = "D1 is not configured yet, so Sage cannot be connected." + accessSuffix;
       sageConnectLink.textContent = "Connect Sage";
       sageDisconnectButton.disabled = true;
       return;
@@ -6219,13 +6511,13 @@ async function loadSageStatus() {
 
     if (status.connected) {
       const suffix = status.reauthorization_required ? " Reconnection is required." : "";
-      sageStatusText.textContent = "Connected to " + status.business_display_name + "." + suffix;
+      sageStatusText.textContent = "Connected to " + status.business_display_name + "." + suffix + accessSuffix;
       sageConnectLink.textContent = status.reauthorization_required ? "Reconnect Sage" : "Reconnect Sage";
-      sageDisconnectButton.disabled = false;
+      sageDisconnectButton.disabled = !status.connection_unlocked;
       return;
     }
 
-    sageStatusText.textContent = sageConnectionOutcome() || "Sage is not connected.";
+    sageStatusText.textContent = (sageConnectionOutcome() || "Sage is not connected.") + accessSuffix;
     sageConnectLink.textContent = "Connect Sage";
     sageDisconnectButton.disabled = true;
   } catch (error) {
@@ -6239,6 +6531,26 @@ async function loadSageStatus() {
   }
 }
 
+function renderSageConnectionAccess(status) {
+  const configured = Boolean(status.connection_lock_configured);
+  sageConnectionUnlocked = configured && Boolean(status.connection_unlocked);
+  sageConnectLink.hidden = !sageConnectionUnlocked;
+  sageDisconnectButton.hidden = !sageConnectionUnlocked;
+  sageConnectionLockButton.disabled = !configured;
+  sageConnectionLockButton.textContent = !configured
+    ? "Sage lock not configured"
+    : sageConnectionUnlocked
+      ? "Lock Sage controls"
+      : "Unlock Sage controls";
+
+  if (sageConnectionUnlocked) {
+    sageConnectionUnlockPanel.hidden = true;
+    sageConnectionPassword.value = "";
+    sageConnectionLockMessage.className = "";
+    sageConnectionLockMessage.textContent = "";
+  }
+}
+
 function sageConnectionOutcome() {
   const result = new URLSearchParams(window.location.search).get("sage");
   const messages = {
@@ -6249,6 +6561,8 @@ function sageConnectionOutcome() {
     storage_failed: "Sage authorized the app, but the connection could not be stored. Check the D1 binding and try again.",
     configuration_failed: "The Sage connection settings are incomplete in this deployment.",
     connection_failed: "Sage returned to the app, but the connection could not be completed. Please try again shortly.",
+    connection_locked: "Unlock the Sage connection controls before connecting or reconnecting Sage.",
+    connection_lock_not_configured: "Set SAGE_CONNECTION_ACCESS_PASSWORD before connecting or reconnecting Sage.",
   };
   const message = messages[result];
   if (message) {

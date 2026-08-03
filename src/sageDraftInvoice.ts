@@ -30,6 +30,7 @@ export interface SageSalesInvoicePayload {
     contact_id: string;
     date: string;
     due_date?: string;
+    status_id: "DRAFT";
     reference: string;
     invoice_lines: Array<{
       description: string;
@@ -181,6 +182,7 @@ export function buildSageDraftInvoice(input: SageDraftInvoiceInput): DraftInvoic
         contact_id: input.contactId,
         date: input.invoiceDate,
         due_date: input.dueDate,
+        status_id: "DRAFT",
         reference,
         invoice_lines: lines.map((line) => line.payload),
       },
