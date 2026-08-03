@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-2";
+const APP_ASSET_VERSION = "20260803-3";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1571,9 +1571,20 @@ function uploadPage(): string {
           <p class="eyebrow">Removals Manager to Sage</p>
           <h1>Sage Import Checker</h1>
         </div>
-        <form method="post" action="/logout">
-          <button class="secondary-button" type="submit">Logout</button>
-        </form>
+        <div class="topbar-actions">
+          <label class="currency-control" for="currencySelector">
+            <span>Display currency</span>
+            <select id="currencySelector" aria-describedby="currencyHelp">
+              <option value="GBP" selected>GBP (£)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="USD">USD ($)</option>
+            </select>
+            <small id="currencyHelp">Labels amounts only; no exchange-rate conversion.</small>
+          </label>
+          <form method="post" action="/logout">
+            <button class="secondary-button" type="submit">Logout</button>
+          </form>
+        </div>
       </header>
 
       <main class="dashboard-shell">
@@ -1728,8 +1739,8 @@ function uploadPage(): string {
             <article><strong>0</strong><span>Excluded storage</span></article>
             <article><strong>0</strong><span>Needs review</span></article>
             <article><strong>0</strong><span>Duplicate warnings</span></article>
-            <article><strong>0.00</strong><span>Candidate value</span></article>
-            <article><strong>0.00</strong><span>Excluded value</span></article>
+            <article><strong>£0.00</strong><span>Candidate value</span></article>
+            <article><strong>£0.00</strong><span>Excluded value</span></article>
           </div>
           <div id="summaryTableWrap" class="table-wrap summary-table-wrap preview-collapsed">
             <table class="summary-table">
@@ -1802,9 +1813,9 @@ function uploadPage(): string {
           <div id="reviewSaveNotice" class="notice"></div>
           <div id="reviewTotals" class="summary-cards review-totals">
             <article><strong>0</strong><span>Included rows</span></article>
-            <article><strong>0.00</strong><span>Included net</span></article>
-            <article><strong>0.00</strong><span>Included VAT</span></article>
-            <article><strong>0.00</strong><span>Included gross</span></article>
+            <article><strong>£0.00</strong><span>Included net</span></article>
+            <article><strong>£0.00</strong><span>Included VAT</span></article>
+            <article><strong>£0.00</strong><span>Included gross</span></article>
             <article><strong>0</strong><span>Review needed</span></article>
             <article><strong>0</strong><span>Excluded rows</span></article>
           </div>
@@ -1923,14 +1934,20 @@ function uploadPage(): string {
             </div>
           </div>
           <div id="draftInvoiceNotice" class="notice"></div>
+          <div id="draftBatchActions" class="review-batch-actions draft-batch-actions" aria-label="Bulk actions for Sage-ready invoices" hidden>
+            <div class="review-batch-copy">
+              <span class="review-tool-eyebrow">Bulk actions</span>
+              <strong id="draftSelectionCount">0 invoices selected</strong>
+              <small id="draftBatchHint">Select one or more ready invoices, then check their final Sage details.</small>
+            </div>
+            <div class="review-batch-buttons">
+              <button id="draftSelectAllButton" type="button">Select all ready</button>
+              <button id="draftClearSelectionButton" class="secondary-button" type="button" disabled>Clear selection</button>
+              <button id="draftDryRunButton" class="secondary-button" type="button" disabled>Check selected draft details</button>
+            </div>
+          </div>
           <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then select one or more Sage-ready invoices here.</div>
           <div id="draftInvoiceWorkspace" class="draft-workspace" hidden>
-            <div class="draft-controls draft-batch-controls">
-              <button id="draftSelectAllButton" class="secondary-button" type="button">Select all ready</button>
-              <button id="draftClearSelectionButton" class="secondary-button" type="button" disabled>Clear selection</button>
-              <strong id="draftSelectionCount" class="draft-selection-count">0 selected</strong>
-              <button id="draftDryRunButton" type="button" disabled>Check selected draft details</button>
-            </div>
             <div id="draftInvoicePreview" class="draft-preview"></div>
             <div id="draftCreateControls" class="draft-controls draft-create-controls" hidden>
               <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> <span id="draftConfirmText">I confirm the selected drafts should be created in Sage.</span></label>
@@ -2139,6 +2156,39 @@ h2 {
 .topbar h1 {
   margin-bottom: 0;
   font-size: 1.35rem;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.currency-control {
+  display: grid;
+  grid-template-columns: auto minmax(120px, auto);
+  align-items: center;
+  gap: 3px 8px;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.currency-control select {
+  min-height: 40px;
+  padding: 7px 32px 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.currency-control small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 650;
 }
 
 .secondary-button {
@@ -3205,16 +3255,8 @@ table {
   font: inherit;
 }
 
-.draft-batch-controls {
-  position: sticky;
-  bottom: 12px;
-  z-index: 2;
-  box-shadow: 0 8px 24px rgb(25 55 49 / 12%);
-}
-
-.draft-selection-count {
-  margin-right: auto;
-  color: var(--ink);
+.draft-batch-actions {
+  margin-bottom: 18px;
 }
 
 .draft-create-controls {
@@ -3408,6 +3450,24 @@ tr.risky-row.high-risk {
     flex-direction: column;
   }
 
+  .topbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .currency-control {
+    grid-template-columns: 1fr;
+  }
+
+  .currency-control small {
+    grid-column: 1;
+  }
+
+  .topbar-actions form,
+  .topbar-actions button {
+    width: 100%;
+  }
+
   .upload-grid {
     grid-template-columns: 1fr;
   }
@@ -3472,6 +3532,7 @@ tr.risky-row.high-risk {
 `;
 
 export const appJs = String.raw`
+const currencySelector = document.querySelector("#currencySelector");
 const uploadForm = document.querySelector("#uploadForm");
 const summaryBody = document.querySelector("#summaryBody");
 const summaryNotice = document.querySelector("#summaryNotice");
@@ -3508,6 +3569,8 @@ const customerMappingBody = document.querySelector("#customerMappingBody");
 const addMissingContactsButton = document.querySelector("#addMissingContactsButton");
 const draftInvoiceSection = document.querySelector("#draftInvoiceSection");
 const draftInvoiceNotice = document.querySelector("#draftInvoiceNotice");
+const draftBatchActions = document.querySelector("#draftBatchActions");
+const draftBatchHint = document.querySelector("#draftBatchHint");
 const draftInvoiceEmpty = document.querySelector("#draftInvoiceEmpty");
 const draftInvoiceWorkspace = document.querySelector("#draftInvoiceWorkspace");
 const draftSelectAllButton = document.querySelector("#draftSelectAllButton");
@@ -3522,13 +3585,20 @@ const draftInvoicePreview = document.querySelector("#draftInvoicePreview");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
 const maxDraftBatchSize = 25;
+const supportedDisplayCurrencies = new Set(["GBP", "EUR", "USD"]);
+let displayCurrency = loadDisplayCurrency();
+let displayCurrencyFormatter = createCurrencyFormatter(displayCurrency);
 let reviewRows = [];
 let activeReviewFilter = "all";
 let latestOriginalFileNames = [];
+let latestParsedRows = [];
+let latestClassificationSummary = null;
+let latestReconciliationRows = [];
 let sageReferences = emptySageReferences();
 const selectedDraftInvoiceIds = new Set();
 const draftDueDates = new Map();
 let activeDraftPreviews = [];
+let activeDraftPreviewFailures = [];
 let draftPreparationState = "no_invoices_selected";
 const referenceOptionsBySelect = {};
 const editingCustomerMappings = new Set();
@@ -3585,6 +3655,16 @@ const uploadSlots = [
     mimeTypes: ["application/pdf"],
   },
 ];
+
+currencySelector.value = displayCurrency;
+currencySelector.addEventListener("change", () => {
+  displayCurrency = supportedDisplayCurrencies.has(currencySelector.value) ? currencySelector.value : "GBP";
+  currencySelector.value = displayCurrency;
+  displayCurrencyFormatter = createCurrencyFormatter(displayCurrency);
+  saveDisplayCurrency(displayCurrency);
+  rerenderCurrencyValues();
+});
+rerenderCurrencyValues();
 
 for (const slot of uploadSlots) {
   const input = document.querySelector("#" + slot.id);
@@ -4146,6 +4226,7 @@ function validateFile(file, slot) {
 }
 
 function renderFileSummary(items) {
+  latestParsedRows = [];
   updatePreviewToggle(items.length);
   renderClassificationSummary();
   resetReviewScreen();
@@ -4199,6 +4280,7 @@ async function parseCsvFiles() {
 
 function renderParsedRows(result, pdfSummaries) {
   const rows = result.rows || [];
+  latestParsedRows = rows;
   updatePreviewToggle(rows.length);
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfRowCount = Number(result.totals?.pdf_rows || result.pdf_rows?.length || 0);
@@ -4229,6 +4311,10 @@ function renderParsedRows(result, pdfSummaries) {
     resultsIntro.textContent = "Amounts and VAT are normalised as numbers, and dates are normalised internally to ISO format.";
   }
 
+  renderParsedSummaryRows(rows);
+}
+
+function renderParsedSummaryRows(rows) {
   summaryBody.innerHTML = rows.slice(0, 100).map((row) => {
     const warnings = row.warnings.length > 0 ? row.warnings.join(" ") : "OK";
     const badgeClass = row.warnings.length > 0 ? " warning" : "";
@@ -4390,12 +4476,13 @@ function updateDraftEmptyGuidance() {
       '<p class="cell-muted">Select any combination below. You can set a separate due date for each invoice and inspect every source line before checking the final Sage conversion.</p>' +
       '<div class="draft-ready-list">' + readyInvoices.map(renderReadyDraftInvoice).join("") + '</div>';
     draftInvoiceEmpty.hidden = false;
-    draftInvoiceWorkspace.hidden = false;
+    draftBatchActions.hidden = false;
     updateDraftSelectionControls();
     return;
   }
 
   draftInvoiceEmpty.hidden = false;
+  draftBatchActions.hidden = true;
   draftInvoiceWorkspace.hidden = true;
   if (reviewRows.length === 0) {
     draftInvoiceEmpty.textContent = "Check the uploaded files and review at least one invoice before preparing Sage drafts.";
@@ -4541,7 +4628,7 @@ function renderTaxMappings() {
       : escapeHtml(code) + '<span>Not configured · ' + usage.count + ' transaction' + plural(usage.count) + ' · ' + formatSterling(usage.vat) + ' VAT</span>';
     return '<details class="conversion-card"' + (saved && savedAvailable ? "" : " open") + '><summary><strong>' + summary + '</strong></summary><div class="conversion-card-content">' +
       '<div class="conversion-source"><div><span>Source tax code</span><strong>' + escapeHtml(code) + '</strong></div><div><span>Found in</span><strong>' + escapeHtml(usage.source) + '</strong></div></div>' +
-      '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Source net total: ' + formatSterling(usage.net) + ' · Source VAT total: ' + formatSterling(usage.vat) + '<br>Example: ' + escapeHtml(usage.example) + (usage.allZeroVat ? ' · All source VAT values are £0.00' : '') + '</p>' +
+      '<p class="conversion-meta">Used by ' + usage.count + ' transaction' + plural(usage.count) + ' · Source net total: ' + formatSterling(usage.net) + ' · Source VAT total: ' + formatSterling(usage.vat) + '<br>Example: ' + escapeHtml(usage.example) + (usage.allZeroVat ? ' · All source VAT values are ' + escapeHtml(formatMoney(0)) : '') + '</p>' +
       suggestion +
       '<p class="conversion-status">' + escapeHtml(saved && savedAvailable ? "Configured" : recommendation.status) + '</p>' +
       '<div class="conversion-choice"><label>Use in Sage Accounting' + sageReferenceSelect("tax-" + slug(code), options, saved?.sage_entity_id, "Select VAT treatment", sageTaxLabel) + referenceSearchInput("tax-" + slug(code), "Search VAT name, percentage or description") + '</label><button type="button" data-save-tax="' + escapeHtml(code) + '">Save VAT choice</button></div>' +
@@ -5414,7 +5501,7 @@ function sagePercentage(entry) {
 }
 
 function formatSterling(value) {
-  return "£" + formatMoney(value);
+  return formatMoney(value);
 }
 
 function savedBadge(saved) {
@@ -5576,7 +5663,10 @@ function updateDraftSelectionControls() {
   const allReadySelected = readyInvoices.length > 0 && readyInvoices.every((invoice) => selectedDraftInvoiceIds.has(invoice.sourceInvoiceId));
   const previewValid = draftPreparationState === "preview_valid" && activeDraftPreviews.length === count && count > 0;
 
-  draftSelectionCount.textContent = count + " selected";
+  draftSelectionCount.textContent = count + " of " + readyInvoices.length + " invoice" + plural(readyInvoices.length) + " selected";
+  draftBatchHint.textContent = count > 0
+    ? "Set each selected invoice's due date, then check the final Sage details before creation."
+    : "Select one or more ready invoices, then check their final Sage details.";
   draftSelectAllButton.disabled = busy || allReadySelected;
   draftClearSelectionButton.disabled = busy || count === 0;
   draftDryRunButton.disabled = busy || count === 0;
@@ -5593,9 +5683,11 @@ function updateDraftSelectionControls() {
 
 function invalidateDraftBatchPreview(message) {
   activeDraftPreviews = [];
+  activeDraftPreviewFailures = [];
   draftPreparationState = selectedDraftInvoiceIds.size > 0 ? "preview_stale" : "no_invoices_selected";
   draftConfirmCheckbox.checked = false;
   draftCreateControls.hidden = true;
+  draftInvoiceWorkspace.hidden = true;
   draftInvoicePreview.innerHTML = "";
   if (message) {
     renderDraftNotice("", message);
@@ -5619,6 +5711,7 @@ async function previewSelectedDraftInvoices() {
   }
 
   activeDraftPreviews = [];
+  activeDraftPreviewFailures = [];
   draftPreparationState = "checking";
   draftConfirmCheckbox.checked = false;
   draftInvoicePreview.innerHTML = "";
@@ -5655,7 +5748,9 @@ async function previewSelectedDraftInvoices() {
     }
   }
 
-  renderDraftBatchPreview(activeDraftPreviews, failures);
+  activeDraftPreviewFailures = failures;
+  renderDraftBatchPreview(activeDraftPreviews, activeDraftPreviewFailures);
+  draftInvoiceWorkspace.hidden = false;
   if (failures.length > 0) {
     draftPreparationState = "failed";
     renderDraftNotice("error", failures.length + " selected invoice" + plural(failures.length) + " could not be checked. No drafts have been created; fix the listed issue and check the selection again.");
@@ -5723,6 +5818,7 @@ async function createSelectedDraftInvoices() {
   const succeeded = results.filter((result) => result.ok).length;
   const failed = results.length - succeeded;
   activeDraftPreviews = [];
+  activeDraftPreviewFailures = [];
   draftConfirmCheckbox.checked = false;
   draftPreparationState = failed > 0 ? "created_partial" : "created";
   await refreshSageReadiness();
@@ -5803,8 +5899,10 @@ function resetDraftInvoiceWorkspace() {
   selectedDraftInvoiceIds.clear();
   draftDueDates.clear();
   activeDraftPreviews = [];
+  activeDraftPreviewFailures = [];
   draftPreparationState = "no_invoices_selected";
   draftInvoiceEmpty.hidden = false;
+  draftBatchActions.hidden = true;
   draftInvoiceWorkspace.hidden = true;
   draftInvoicePreview.innerHTML = "";
   draftInvoiceNotice.className = "notice";
@@ -5908,6 +6006,7 @@ function emptySageReferences() {
 }
 
 function renderClassificationSummary(summary) {
+  latestClassificationSummary = summary || null;
   const values = summary || {
     total_rows_uploaded: 0,
     import_candidates: 0,
@@ -5930,6 +6029,7 @@ function renderClassificationSummary(summary) {
 }
 
 function renderReconciliation(rows) {
+  latestReconciliationRows = [...rows];
   if (rows.length === 0) {
     renderReconciliationEmpty("No monthly PDF reconciliation available.");
     reconciliationIntro.textContent = "Add the monthly invoice report PDF to compare against CSV rows.";
@@ -5960,6 +6060,7 @@ function renderReconciliation(rows) {
 }
 
 function renderReconciliationEmpty(message) {
+  latestReconciliationRows = [];
   updateReconciliationToggle(0);
   reconciliationBody.innerHTML = '<tr><td colspan="9" class="empty-state">' + escapeHtml(message) + "</td></tr>";
 }
@@ -6003,6 +6104,7 @@ function renderNotice(state, message) {
 }
 
 function renderEmpty(message) {
+  latestParsedRows = [];
   updatePreviewToggle(0);
   summaryBody.innerHTML = '<tr><td colspan="13" class="empty-state">' + escapeHtml(message) + "</td></tr>";
 }
@@ -6042,8 +6144,53 @@ function badgeClassForClassification(value) {
   return "warning";
 }
 
+function loadDisplayCurrency() {
+  try {
+    const saved = window.localStorage.getItem("sage_import_display_currency");
+    return supportedDisplayCurrencies.has(saved) ? saved : "GBP";
+  } catch {
+    return "GBP";
+  }
+}
+
+function saveDisplayCurrency(currency) {
+  try {
+    window.localStorage.setItem("sage_import_display_currency", currency);
+  } catch {
+    // The selector still works for this page when browser storage is unavailable.
+  }
+}
+
+function createCurrencyFormatter(currency) {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function rerenderCurrencyValues() {
+  renderClassificationSummary(latestClassificationSummary);
+  if (latestParsedRows.length > 0) {
+    renderParsedSummaryRows(latestParsedRows);
+  }
+  if (latestReconciliationRows.length > 0) {
+    renderReconciliation(latestReconciliationRows);
+  }
+  renderReviewTotals();
+  if (reviewRows.length > 0) {
+    renderReviewTable();
+    renderMappingScreens();
+  }
+  if (activeDraftPreviews.length > 0) {
+    renderDraftBatchPreview(activeDraftPreviews, activeDraftPreviewFailures);
+  }
+}
+
 function formatMoney(value) {
-  return typeof value === "number" ? value.toFixed(2) : "-";
+  return typeof value === "number" ? displayCurrencyFormatter.format(value) : "-";
 }
 
 function numericAmount(value) {

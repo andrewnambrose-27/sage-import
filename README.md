@@ -181,7 +181,8 @@ The draft workflow remains review-led:
 
 - Save the reviewed batch first. Saved transactions are locked before drafting.
 - Step 5 lists every `ready_for_sage` invoice with its customer, dates, source lines, service type, tax/nominal conversions and net/VAT/gross totals.
-- Select any combination, use **Select all ready** or **Clear selection**, and set a separate due date for each invoice.
+- Use the **Bulk actions** bar to see the current selection count, select all ready invoices, clear the selection, or check all selected drafts together.
+- Select any combination and set a separate due date for each invoice.
 - Choose **Check selected draft details** to preview the final Sage customer, line mappings, totals, warnings and reconciliation for every selected invoice.
 - Tick the batch confirmation box before **Create selected drafts in Sage** is enabled.
 
@@ -191,7 +192,11 @@ The app uses `POST /v3.1/sales_invoices` with the official Sage `sales_invoice` 
 
 Before creation, the app searches every matching Sage page using the `RM inv no.<number>` reference and explicitly requests the `reference` attribute, then reserves the source invoice in D1 using the unique `sage_imports.source_invoice_id` constraint. A confirmed Sage ID is saved as `created`. A network timeout, server error, or response without an ID is recorded as `uncertain` and is never retried automatically; check Sage first. A Sage validation rejection is recorded as `failed`.
 
-The due date defaults to 30 days after the invoice date for the preview. Confirm or change it to the customer’s actual agreed terms before creating the draft.
+The due date defaults to 30 days after the invoice date for the preview. Confirm or change it to the customer's actual agreed terms before creating the draft.
+
+## Display Currency
+
+The **Display currency** selector at the top of the app defaults to GBP (`£`) and can label amounts as GBP, EUR or USD. The selection is remembered in that browser. It changes display formatting only: it does not apply an exchange rate, alter CSV values, or change the numeric amounts sent to Sage. The connected Sage business remains the authority for the accounting currency.
 
 ## Sage Reference Mappings
 
