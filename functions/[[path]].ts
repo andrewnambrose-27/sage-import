@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-9";
+const APP_ASSET_VERSION = "20260803-10";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -5890,10 +5890,10 @@ function updateDraftSelectionControls() {
     ? "Checking " + count + " draft" + plural(count) + "..."
     : "Check selected draft details (" + count + ")";
   draftCreateControls.hidden = count === 0 && draftPreparationState !== "creating";
-  draftConfirmCheckbox.disabled = !previewValid || busy;
+  draftConfirmCheckbox.disabled = count === 0 || busy;
   draftConfirmText.textContent = previewValid
     ? "I confirm " + count + " selected draft" + plural(count) + " should be created in Sage."
-    : "Check the selected draft details before confirming creation.";
+    : "I confirm " + count + " selected draft" + plural(count) + " should be created in Sage after the details check passes.";
   draftCreateButton.textContent = draftPreparationState === "creating"
     ? "Creating drafts..."
     : draftPreparationState === "checking"
@@ -5936,7 +5936,6 @@ async function previewSelectedDraftInvoices() {
   activeDraftPreviews = [];
   activeDraftPreviewFailures = [];
   draftPreparationState = "checking";
-  draftConfirmCheckbox.checked = false;
   draftInvoicePreview.innerHTML = "";
   updateDraftSelectionControls();
   const failures = [];
@@ -5988,6 +5987,7 @@ async function previewSelectedDraftInvoices() {
   renderDraftBatchPreview(activeDraftPreviews, activeDraftPreviewFailures);
   draftInvoiceWorkspace.hidden = false;
   if (failures.length > 0) {
+    draftConfirmCheckbox.checked = false;
     const readinessResult = await refreshSageReadiness();
     draftPreparationState = "failed";
     renderDraftNotice("error", readinessResult?.review_refresh_required

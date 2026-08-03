@@ -12,7 +12,9 @@ describe("embedded browser application", () => {
     expect(appJs).toContain('document.querySelector("#draftBatchActions")');
     expect(appJs).toContain("Select at least one Sage-ready invoice first.");
     expect(appJs).toContain('draftCreateButton.disabled = count === 0 || busy');
+    expect(appJs).toContain('draftConfirmCheckbox.disabled = count === 0 || busy');
     expect(appJs).toContain("Tick the confirmation box before creating the selected drafts in Sage.");
+    expect(appJs).toContain("should be created in Sage after the details check passes.");
     expect(appJs).toContain("activeDraftPreviews.every");
     expect(appJs).toContain('if (!draftPreviewMatchesSelection())');
     expect(appJs).toContain('" details to continue"');
