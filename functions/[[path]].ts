@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260729-8";
+const APP_ASSET_VERSION = "20260803-1";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1915,15 +1915,15 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section class="results-panel draft-panel" aria-live="polite">
+        <section id="draftInvoiceSection" class="results-panel draft-panel" aria-live="polite">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">5</span><h2>Prepare one Sage draft invoice</h2></div>
-              <p>Choose a saved, Sage-ready invoice from the review table. This stage creates a draft only; it never sends, releases or publishes an invoice.</p>
+              <p>Choose a saved, Sage-ready invoice below. This stage creates a draft only; it never sends, releases or publishes an invoice.</p>
             </div>
           </div>
           <div id="draftInvoiceNotice" class="notice"></div>
-          <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then select “Preview draft” beside one Sage-ready invoice.</div>
+          <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then choose a Sage-ready invoice here.</div>
           <div id="draftInvoiceWorkspace" class="draft-workspace" hidden>
             <div class="draft-controls">
               <label>Due date
@@ -2734,6 +2734,10 @@ table {
   color: var(--sage-dark);
 }
 
+.continue-draft-button {
+  margin-left: auto;
+}
+
 .why-conversion {
   margin: 0 0 16px;
   padding: 12px 14px;
@@ -3070,6 +3074,30 @@ table {
   font-weight: 700;
 }
 
+.draft-ready-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.draft-ready-invoice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+}
+
+.draft-ready-invoice span {
+  color: var(--muted);
+  font-weight: 650;
+}
+
 .draft-controls {
   display: flex;
   flex-wrap: wrap;
@@ -3354,6 +3382,7 @@ const taxMappingBody = document.querySelector("#taxMappingBody");
 const ledgerMappingBody = document.querySelector("#ledgerMappingBody");
 const customerMappingBody = document.querySelector("#customerMappingBody");
 const addMissingContactsButton = document.querySelector("#addMissingContactsButton");
+const draftInvoiceSection = document.querySelector("#draftInvoiceSection");
 const draftInvoiceNotice = document.querySelector("#draftInvoiceNotice");
 const draftInvoiceEmpty = document.querySelector("#draftInvoiceEmpty");
 const draftInvoiceWorkspace = document.querySelector("#draftInvoiceWorkspace");
@@ -3543,6 +3572,22 @@ reviewBody.addEventListener("click", (event) => {
     return;
   }
   previewDraftInvoice(button.dataset.previewDraft || "");
+});
+
+draftInvoiceEmpty.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-preview-draft]") : null;
+  if (!button) {
+    return;
+  }
+  previewDraftInvoice(button.dataset.previewDraft || "");
+});
+
+conversionSetupSummary.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-continue-to-drafts]") : null;
+  if (!button) {
+    return;
+  }
+  draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 exportReviewButton.addEventListener("click", () => {
@@ -4214,8 +4259,27 @@ function updateDraftEmptyGuidance() {
     draftInvoiceEmpty.textContent = "Choose Include for the invoice rows you want, then save the reviewed batch.";
     return;
   }
-  if (savedRows.some((row) => row.sage_readiness === "ready_for_sage")) {
-    draftInvoiceEmpty.textContent = "One or more invoices are ready. Select Preview draft in the Action column of the review table.";
+  const groupedInvoices = new Map();
+  for (const row of savedRows) {
+    const key = row.invoice_number || row.source_invoice_id;
+    const group = groupedInvoices.get(key) || [];
+    group.push(row);
+    groupedInvoices.set(key, group);
+  }
+  const readyInvoices = Array.from(groupedInvoices.values())
+    .filter((lines) => lines.every((line) => line.sage_readiness === "ready_for_sage"))
+    .map((lines) => ({
+      row: lines[0],
+      gross: lines.reduce((total, line) => total + grossAmount(line), 0),
+    }));
+  if (readyInvoices.length > 0) {
+    draftInvoiceEmpty.innerHTML =
+      '<strong>' + readyInvoices.length + ' invoice' + plural(readyInvoices.length) + ' ready to create as a Sage draft.</strong>' +
+      '<div class="draft-ready-list">' + readyInvoices.map(({ row, gross }) =>
+        '<div class="draft-ready-invoice"><div><strong>Invoice ' + escapeHtml(row.invoice_number || "-") + '</strong><br><span>' +
+        escapeHtml(row.customer_name || "Unknown customer") + ' · ' + escapeHtml(formatMoney(gross)) +
+        '</span></div><button type="button" data-preview-draft="' + escapeHtml(row.source_invoice_id) + '">Preview draft</button></div>'
+      ).join("") + '</div>';
     return;
   }
   const missingContacts = savedRows.filter((row) => row.sage_readiness === "missing_contact_mapping").length;
@@ -5056,7 +5120,7 @@ function renderConversionSetupSummary() {
 
   conversionSetupSummary.className = "conversion-summary" + (complete ? " complete" : "");
   conversionSetupSummary.innerHTML = complete
-    ? '<strong>Ready to continue</strong><span>All required Sage conversion choices have been saved.</span>'
+    ? '<strong>Ready to continue</strong><span>All required Sage conversion choices have been saved.</span><button class="secondary-button continue-draft-button" type="button" data-continue-to-drafts>Continue to draft invoices</button>'
     : '<strong>Before continuing</strong>' +
       taxCodes.filter((code) => {
         const mapping = sageReferences.tax_mappings.find((item) => item.source_code === code && item.manually_confirmed);
@@ -5335,6 +5399,7 @@ async function previewDraftInvoice(sourceInvoiceId) {
     draftPreparationState = "preview_valid";
     renderDraftPreview(result.preview);
     renderDraftNotice("success", "Draft details checked. Review the totals, then confirm the one-off Sage action.");
+    draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     draftInvoicePreview.innerHTML = "";
     renderDraftNotice("error", "The draft details could not be checked.");

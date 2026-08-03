@@ -634,22 +634,23 @@ export async function createSagePlaceholderCustomer(client: SageApiClient, custo
   return { id, displayName };
 }
 
-export async function searchSageSalesInvoices(client: SageApiClient, search: string): Promise<unknown> {
+export async function searchSageSalesInvoices(client: SageApiClient, search: string): Promise<SageReferenceFetchResult> {
   const params = new URLSearchParams();
   params.set("search", search);
-  const response = await client.request(`${sageDraftInvoicePaths.salesInvoices}?${params.toString()}`);
-  if (!response.ok) {
-    throw new SageBusinessLookupError("Sage sales invoices could not be searched.");
-  }
-  return response.json();
+  params.set("attributes", "reference");
+  return fetchSageReferenceCollection(
+    client,
+    `${sageDraftInvoicePaths.salesInvoices}?${params.toString()}`,
+    "Sage sales invoices",
+  );
 }
 
 export async function createSageDraftInvoice(client: SageApiClient, payload: unknown): Promise<unknown> {
-  const response = await client.request(sageDraftInvoicePaths.salesInvoices, {
+  const response = await sageRequestWithTimeout(client, sageDraftInvoicePaths.salesInvoices, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  });
+  }, 20_000, () => new SageUncertainResultError());
 
   if (!response.ok) {
     const status = response.status;
@@ -756,14 +757,20 @@ function invokeFetch(fetcher: typeof fetch, input: RequestInfo | URL, init?: Req
   return fetcher.call(globalThis, input, init);
 }
 
-async function sageRequestWithTimeout(client: SageApiClient, path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function sageRequestWithTimeout(
+  client: SageApiClient,
+  path: string,
+  init: RequestInit,
+  timeoutMs: number,
+  timeoutError: () => Error = () => new SageBusinessLookupError("Sage took too long to respond."),
+): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await client.request(path, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new SageBusinessLookupError("Sage took too long to respond.");
+      throw timeoutError();
     }
     throw error;
   } finally {
@@ -886,7 +893,9 @@ function withPagination(path: string, page: number, itemsPerPage: number): strin
   const url = new URL(path, "https://sage-import.invalid");
   url.searchParams.set("items_per_page", String(itemsPerPage));
   url.searchParams.set("page", String(page));
-  url.searchParams.set("attributes", "all");
+  if (!url.searchParams.has("attributes")) {
+    url.searchParams.set("attributes", "all");
+  }
   return `${url.pathname}${url.search}`;
 }
 

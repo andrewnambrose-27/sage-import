@@ -28,8 +28,8 @@ describe("Sage draft invoice payload", () => {
         due_date: "2026-07-31",
         reference: "RM inv no.4632",
         invoice_lines: [
-          { description: "Removal service", quantity: 1, unit_price: 100.1, tax_amount: 20.02, ledger_account_id: "ledger-1", tax_rate_id: "tax-1" },
-          { description: "Packing", quantity: 1, unit_price: 25.05, tax_amount: 5.01, ledger_account_id: "ledger-1", tax_rate_id: "tax-1" },
+          { description: "Removal service", quantity: 1, unit_price: 100.1, tax_amount: 20.02, ledger_account_id: "ledger-1", tax_rate_id: "tax-1", eu_goods_services_type_id: "2" },
+          { description: "Packing", quantity: 1, unit_price: 25.05, tax_amount: 5.01, ledger_account_id: "ledger-1", tax_rate_id: "tax-1", eu_goods_services_type_id: "2" },
         ],
       },
     });
