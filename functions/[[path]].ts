@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-3";
+const APP_ASSET_VERSION = "20260803-4";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -294,13 +294,16 @@ async function handleImportBatchSave(request: Request, env: Env): Promise<Respon
   } catch (error) {
     if (error instanceof DuplicateSourceInvoiceError) {
       const existing = await database.findPreviouslySavedInvoices(rows);
-      if (existing.length === rows.length) {
+      const existingBatchIds = new Set(existing.map((invoice) => invoice.import_batch_id));
+      if (existing.length === rows.length && existingBatchIds.size === 1) {
+        const refreshed = await database.refreshPreviouslySavedInvoices(rows, existing);
         return jsonResponse({
           ok: true,
           already_saved: true,
-          import_batch_id: existing[0]?.import_batch_id,
-          invoice_count: existing.length,
-          source_invoice_ids: existing.map((invoice) => invoice.id),
+          review_data_refreshed: true,
+          import_batch_id: refreshed[0]?.import_batch_id,
+          invoice_count: refreshed.length,
+          source_invoice_ids: refreshed.map((invoice) => invoice.id),
           duplicate_blocked: false,
         });
       }
@@ -798,13 +801,15 @@ async function handleSageReadiness(request: Request, env: Env): Promise<Response
   if (!businessId) {
     return jsonResponse({ ok: false, error: "Connect Sage before checking conversion readiness." }, 401);
   }
-  const [customerMappings, taxMappings, ledgerMappings, taxRates, ledgerAccounts, importedIds] = await Promise.all([
+  const sourceInvoiceIds = rows.map((row) => String(row.source_invoice_id ?? "")).filter(Boolean);
+  const [customerMappings, taxMappings, ledgerMappings, taxRates, ledgerAccounts, importedIds, savedInvoices] = await Promise.all([
     database.value.listCustomerMappings(businessId),
     database.value.listReferenceMappings(businessId, "tax_rate"),
     database.value.listReferenceMappings(businessId, "ledger_account"),
     database.value.listSageReferenceCache(businessId, "tax_rate"),
     database.value.listSageReferenceCache(businessId, "ledger_account"),
-    database.value.importedSourceInvoiceIds(rows.map((row) => String(row.source_invoice_id ?? "")).filter(Boolean)),
+    database.value.importedSourceInvoiceIds(sourceInvoiceIds),
+    database.value.listSourceInvoicesByIds(sourceInvoiceIds),
   ]);
 
   const context = {
@@ -814,11 +819,29 @@ async function handleSageReadiness(request: Request, env: Env): Promise<Response
     importedSourceInvoiceIds: importedIds,
   };
 
+  const savedById = new Map(savedInvoices.map((invoice) => [invoice.id, invoice]));
+  const readinessInputs = rows.map((row) => {
+    const saved = savedById.get(String(row.source_invoice_id ?? ""));
+    return saved ? sourceInvoiceForReadiness(saved) : row as unknown as ReadinessInput;
+  });
+  const reviewRefreshRequired = rows.some((row) => {
+    const sourceInvoiceId = String(row.source_invoice_id ?? "");
+    const saved = savedById.get(sourceInvoiceId);
+    if (!saved || importedIds.has(sourceInvoiceId)) {
+      return false;
+    }
+    const currentCustomerKey = typeof row.customer_name === "string" && row.customer_name.trim()
+      ? normalizeCustomerName(row.customer_name)
+      : unnamedCustomerMappingKey;
+    return (saved.normalized_customer_name || unnamedCustomerMappingKey) !== currentCustomerKey;
+  });
+
   return jsonResponse({
     ok: true,
-    readiness: rows.map((row, index) => ({
-      review_id: row.review_id ?? String(index),
-      status: readinessForInvoice(row as never, context),
+    review_refresh_required: reviewRefreshRequired,
+    readiness: readinessInputs.map((readinessInput, index) => ({
+      review_id: rows[index]?.review_id ?? String(index),
+      status: readinessForInvoice(readinessInput, context),
     })),
     distinct_tax_codes: distinctTaxCodes(rows as never),
     distinct_ledger_codes: distinctLedgerCodes(rows as never),
@@ -3859,7 +3882,8 @@ saveBatchButton.addEventListener("click", async () => {
       return;
     }
 
-    renderReviewSaveNotice("success", (result.already_saved ? "Reconnected to saved reviewed batch " : "Saved reviewed batch ") + result.import_batch_id + " with " + result.invoice_count + " transaction" + plural(result.invoice_count) + ".");
+    const savedBatchMessage = (result.already_saved ? "Reconnected to saved reviewed batch " : "Saved reviewed batch ") + result.import_batch_id + " with " + result.invoice_count + " transaction" + plural(result.invoice_count) + ".";
+    renderReviewSaveNotice("success", savedBatchMessage + (result.review_data_refreshed ? " Customer and review details were refreshed from this upload." : ""));
     if (Array.isArray(result.source_invoice_ids) && result.source_invoice_ids.length === reviewRows.length) {
       for (let index = 0; index < reviewRows.length; index += 1) {
         reviewRows[index].source_invoice_id = result.source_invoice_ids[index];
@@ -3867,6 +3891,7 @@ saveBatchButton.addEventListener("click", async () => {
       saveBatchButton.disabled = true;
       saveBatchButton.textContent = "Reviewed batch saved";
       renderReviewTable();
+      await refreshSageReadiness();
     }
   } catch (error) {
     renderReviewSaveNotice("error", "The reviewed batch could not be saved.");
@@ -5257,7 +5282,7 @@ async function saveCustomerMapping(normalizedCustomerName) {
 
 async function refreshSageReadiness() {
   if (reviewRows.length === 0) {
-    return;
+    return null;
   }
 
   try {
@@ -5268,7 +5293,7 @@ async function refreshSageReadiness() {
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
-      return;
+      return null;
     }
 
     const readinessById = new Map(result.readiness.map((item) => [item.review_id, item.status]));
@@ -5276,8 +5301,18 @@ async function refreshSageReadiness() {
       row.sage_readiness = readinessById.get(row.review_id) || "blocked_by_warning";
     }
     renderReviewTable();
+    if (result.review_refresh_required) {
+      saveBatchButton.disabled = false;
+      saveBatchButton.textContent = "Refresh saved batch details";
+      renderReviewSaveNotice("error", "The saved batch has older customer details than this review. Refresh the saved batch before preparing Sage drafts.");
+    } else if (reviewRows.every((row) => row.source_invoice_id)) {
+      saveBatchButton.disabled = true;
+      saveBatchButton.textContent = "Reviewed batch saved";
+    }
+    return result;
   } catch (error) {
     console.error(error);
+    return null;
   }
 }
 
@@ -5752,8 +5787,11 @@ async function previewSelectedDraftInvoices() {
   renderDraftBatchPreview(activeDraftPreviews, activeDraftPreviewFailures);
   draftInvoiceWorkspace.hidden = false;
   if (failures.length > 0) {
+    const readinessResult = await refreshSageReadiness();
     draftPreparationState = "failed";
-    renderDraftNotice("error", failures.length + " selected invoice" + plural(failures.length) + " could not be checked. No drafts have been created; fix the listed issue and check the selection again.");
+    renderDraftNotice("error", readinessResult?.review_refresh_required
+      ? "The saved batch has older customer details than this review. In Review transactions, select Refresh saved batch details, then check the draft again."
+      : failures.length + " selected invoice" + plural(failures.length) + " could not be checked. No drafts have been created; fix the listed issue and check the selection again.");
   } else {
     draftPreparationState = "preview_valid";
     renderDraftNotice("success", invoices.length + " draft" + plural(invoices.length) + " checked. Review every converted line and total, then confirm the batch action.");

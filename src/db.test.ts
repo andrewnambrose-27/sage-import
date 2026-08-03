@@ -4,6 +4,7 @@ import {
   assertUniqueSourceHashes,
   buildSourceInvoiceRecord,
   hashSourceInvoice,
+  mergeSavedInvoiceReviewData,
   moneyToMinorUnits,
   normalizeCustomerName,
   parseCachedReferenceJson,
@@ -53,6 +54,37 @@ describe("source invoice records", () => {
     const second = await buildSourceInvoiceRecord(transaction(), "batch-2", "2026-07-15T20:00:00.000Z");
 
     expect(first.source_hash).toBe(second.source_hash);
+  });
+
+  it("refreshes customer and review enrichment without changing the saved invoice identity", async () => {
+    const saved = await buildSourceInvoiceRecord(transaction({
+      customer_name: undefined,
+      classification: "missing_customer",
+      review_decision: "include",
+    }), "batch-1", "2026-07-14T20:00:00.000Z");
+    const current = await buildSourceInvoiceRecord(transaction({
+      customer_name: "Sarah Taylor",
+      classification: "import_candidate",
+      review_decision: "include",
+    }), "", "");
+
+    const refreshed = mergeSavedInvoiceReviewData(saved, current, "2026-08-03T15:45:00.000Z");
+
+    expect(refreshed.id).toBe(saved.id);
+    expect(refreshed.import_batch_id).toBe("batch-1");
+    expect(refreshed.source_hash).toBe(saved.source_hash);
+    expect(refreshed.customer_name).toBe("Sarah Taylor");
+    expect(refreshed.normalized_customer_name).toBe("sarah taylor");
+    expect(refreshed.classification).toBe("import_candidate");
+    expect(refreshed.updated_at).toBe("2026-08-03T15:45:00.000Z");
+  });
+
+  it("refuses to refresh review data for a different source invoice", async () => {
+    const saved = await buildSourceInvoiceRecord(transaction(), "batch-1", "2026-07-14T20:00:00.000Z");
+    const different = await buildSourceInvoiceRecord(transaction({ amount: 101 }), "", "");
+
+    expect(() => mergeSavedInvoiceReviewData(saved, different, "2026-08-03T15:45:00.000Z"))
+      .toThrow("Only matching source invoices");
   });
 
   it("blocks duplicate hashes inside the same batch before inserting", () => {

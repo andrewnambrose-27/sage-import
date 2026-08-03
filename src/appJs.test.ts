@@ -13,6 +13,12 @@ describe("embedded browser application", () => {
     expect(appJs).toContain("Select at least one Sage-ready invoice first.");
   });
 
+  it("offers to refresh older saved customer details before draft creation", () => {
+    expect(appJs).toContain("Refresh saved batch details");
+    expect(appJs).toContain("review_refresh_required");
+    expect(appJs).toContain("Customer and review details were refreshed from this upload.");
+  });
+
   it("defaults to a remembered GBP display currency without converting values", () => {
     expect(appJs).toContain('document.querySelector("#currencySelector")');
     expect(appJs).toContain('window.localStorage.getItem("sage_import_display_currency")');

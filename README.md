@@ -180,6 +180,7 @@ Current hard-coded Sage endpoints live in `src/sage.ts`:
 The draft workflow remains review-led:
 
 - Save the reviewed batch first. Saved transactions are locked before drafting.
+- Re-saving an identical reviewed batch refreshes its customer and review enrichment from the current upload, while invoices already pending, created or uncertain in Sage remain immutable.
 - Step 5 lists every `ready_for_sage` invoice with its customer, dates, source lines, service type, tax/nominal conversions and net/VAT/gross totals.
 - Use the **Bulk actions** bar to see the current selection count, select all ready invoices, clear the selection, or check all selected drafts together.
 - Select any combination and set a separate due date for each invoice.

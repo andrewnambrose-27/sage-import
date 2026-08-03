@@ -346,6 +346,58 @@ export class ImportDatabase {
     return hashes.map((hash) => byHash.get(hash)).filter((invoice): invoice is SourceInvoiceRecord => Boolean(invoice));
   }
 
+  async refreshPreviouslySavedInvoices(
+    rows: PersistableSourceInvoice[],
+    existing: SourceInvoiceRecord[],
+  ): Promise<SourceInvoiceRecord[]> {
+    if (rows.length === 0 || rows.length !== existing.length) {
+      return existing;
+    }
+
+    const candidates = await Promise.all(rows.map((row) => buildSourceInvoiceRecord(row, "", "")));
+    if (candidates.some((candidate, index) => candidate.source_hash !== existing[index]?.source_hash)) {
+      throw new Error("Previously saved invoice order did not match the reviewed rows.");
+    }
+
+    const now = new Date().toISOString();
+    const refreshed = existing.map((saved, index) => mergeSavedInvoiceReviewData(saved, candidates[index], now));
+    await this.db.batch(refreshed.map((invoice) => this.db.prepare(
+      `UPDATE source_invoices
+       SET rm_job_id = ?, customer_name = ?, normalized_customer_name = ?, classification = ?,
+           review_decision = ?, warnings_json = ?, raw_source_json = ?, updated_at = ?
+       WHERE id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM sage_imports
+           WHERE source_invoice_id = source_invoices.id
+             AND import_status IN ('pending', 'created', 'uncertain')
+         )`,
+    ).bind(
+      invoice.rm_job_id,
+      invoice.customer_name,
+      invoice.normalized_customer_name,
+      invoice.classification,
+      invoice.review_decision,
+      invoice.warnings_json,
+      invoice.raw_source_json,
+      invoice.updated_at,
+      invoice.id,
+    )));
+
+    return this.listSourceInvoicesByIds(existing.map((invoice) => invoice.id));
+  }
+
+  async listSourceInvoicesByIds(sourceInvoiceIds: string[]): Promise<SourceInvoiceRecord[]> {
+    if (sourceInvoiceIds.length === 0) {
+      return [];
+    }
+    const placeholders = sourceInvoiceIds.map(() => "?").join(",");
+    const result = await this.db.prepare(
+      `SELECT * FROM source_invoices WHERE id IN (${placeholders})`,
+    ).bind(...sourceInvoiceIds).all<SourceInvoiceRecord>();
+    const byId = new Map((result.results ?? []).map((invoice) => [invoice.id, invoice]));
+    return sourceInvoiceIds.map((id) => byId.get(id)).filter((invoice): invoice is SourceInvoiceRecord => Boolean(invoice));
+  }
+
   async listInvoiceLinesForSourceInvoice(sourceInvoiceId: string): Promise<SourceInvoiceRecord[]> {
     const anchor = await this.getSourceInvoice(sourceInvoiceId);
     if (!anchor || !anchor.rm_invoice_number) {
@@ -541,6 +593,27 @@ export function parseCachedReferenceJson(value: string): Record<string, unknown>
 
 export function normalizeCustomerName(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.,'"]/g, "");
+}
+
+export function mergeSavedInvoiceReviewData(
+  saved: SourceInvoiceRecord,
+  current: SourceInvoiceRecord,
+  updatedAt: string,
+): SourceInvoiceRecord {
+  if (saved.source_hash !== current.source_hash) {
+    throw new Error("Only matching source invoices can refresh saved review data.");
+  }
+  return {
+    ...saved,
+    rm_job_id: current.rm_job_id,
+    customer_name: current.customer_name,
+    normalized_customer_name: current.normalized_customer_name,
+    classification: current.classification,
+    review_decision: current.review_decision,
+    warnings_json: current.warnings_json,
+    raw_source_json: current.raw_source_json,
+    updated_at: updatedAt,
+  };
 }
 
 export function assertUniqueSourceHashes(records: Array<{ source_hash: string }>): void {
