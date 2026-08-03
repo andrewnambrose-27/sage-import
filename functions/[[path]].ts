@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-10";
+const APP_ASSET_VERSION = "20260803-11";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1968,7 +1968,6 @@ function uploadPage(): string {
               <p>Review every saved, Sage-ready invoice below, select the ones you want, then check and create the selected drafts together. Drafts are never sent, released or published.</p>
             </div>
           </div>
-          <div id="draftInvoiceNotice" class="notice"></div>
           <div id="draftBatchActions" class="review-batch-actions draft-batch-actions" aria-label="Bulk actions for Sage-ready invoices" hidden>
             <div class="review-batch-copy">
               <span class="review-tool-eyebrow">Bulk actions</span>
@@ -1984,6 +1983,7 @@ function uploadPage(): string {
           <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then select one or more Sage-ready invoices here.</div>
           <div id="draftInvoiceWorkspace" class="draft-workspace" hidden>
             <div id="draftInvoicePreview" class="draft-preview"></div>
+            <div id="draftInvoiceNotice" class="notice"></div>
             <div id="draftCreateControls" class="draft-controls draft-create-controls" hidden>
               <div class="draft-final-step-copy"><span>Final step</span><strong>Create the selected Sage drafts</strong></div>
               <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> <span id="draftConfirmText">I confirm the selected drafts should be created in Sage.</span></label>
@@ -3191,6 +3191,10 @@ table {
 .draft-workspace {
   display: grid;
   gap: 16px;
+}
+
+.draft-workspace > .notice {
+  margin-bottom: 0;
 }
 
 .draft-empty {
@@ -5901,7 +5905,7 @@ function updateDraftSelectionControls() {
       : previewValid
         ? "Create " + count + " draft" + plural(count) + " in Sage"
         : "Check " + count + " draft" + plural(count) + " details to continue";
-  draftCreateButton.disabled = count === 0 || busy;
+  draftCreateButton.disabled = count === 0 || busy || (previewValid && !draftConfirmCheckbox.checked);
 }
 
 function invalidateDraftBatchPreview(message) {
