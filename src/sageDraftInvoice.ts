@@ -38,9 +38,14 @@ export interface SageSalesInvoicePayload {
       tax_amount: number;
       ledger_account_id: string;
       tax_rate_id: string;
+      eu_goods_services_type_id: "2";
     }>;
   };
 }
+
+export const sageEuGoodsServicesTypeIds = {
+  services: "2",
+} as const;
 
 export interface DraftInvoicePreview {
   payload: SageSalesInvoicePayload;
@@ -149,6 +154,7 @@ export function buildSageDraftInvoice(input: SageDraftInvoiceInput): DraftInvoic
         tax_amount: minorUnitsToSageNumber(source.vat_amount_minor),
         ledger_account_id: mapping.ledgerAccountId,
         tax_rate_id: mapping.taxRateId,
+        eu_goods_services_type_id: sageEuGoodsServicesTypeIds.services,
       },
     };
   });

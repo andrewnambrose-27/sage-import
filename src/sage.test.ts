@@ -6,6 +6,7 @@ import {
   SageReferenceFetchError,
   SageResponseShapeError,
   SageTokenExchangeError,
+  createSageDraftInvoice,
   decryptTokenPair,
   encryptTokenPair,
   exchangeAuthorizationCode,
@@ -14,6 +15,7 @@ import {
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
   searchSageContacts,
+  searchSageSalesInvoices,
   safeStatusFromConnection,
   validateOAuthCallbackInput,
   type SageConnectionConfig,
@@ -319,6 +321,58 @@ describe("Sage contact search", () => {
       endpoint: expect.stringContaining("/contacts?"),
       status: 403,
     });
+  });
+});
+
+describe("Sage draft invoices", () => {
+  it("requests the invoice reference needed for duplicate protection", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => jsonResponse([
+      { id: "invoice-1", displayed_as: "SI-1", reference: "RM inv no.4632" },
+    ])) as unknown as typeof fetch;
+
+    const result = await searchSageSalesInvoices(new SageApiClient(store, config, fetcher), "RM inv no.4632");
+
+    expect(result.items).toEqual([
+      { id: "invoice-1", displayed_as: "SI-1", reference: "RM inv no.4632" },
+    ]);
+    const requestUrl = new URL(String(vi.mocked(fetcher).mock.calls[0][0]));
+    expect(requestUrl.searchParams.get("search")).toBe("RM inv no.4632");
+    expect(requestUrl.searchParams.get("attributes")).toBe("reference");
+    expect(requestUrl.searchParams.get("items_per_page")).toBe("200");
+  });
+
+  it("posts the official sales_invoice wrapper and returns the created draft", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn(async () => jsonResponse({ id: "invoice-1", displayed_as: "SI-1" }, { status: 201 })) as unknown as typeof fetch;
+    const payload = {
+      sales_invoice: {
+        contact_id: "contact-1",
+        date: "2026-08-01",
+        due_date: "2026-08-31",
+        reference: "RM inv no.4632",
+        invoice_lines: [{
+          description: "Removal service",
+          quantity: 1,
+          unit_price: 100,
+          tax_amount: 20,
+          ledger_account_id: "ledger-4010",
+          tax_rate_id: "tax-20",
+          eu_goods_services_type_id: "2",
+        }],
+      },
+    };
+
+    await expect(createSageDraftInvoice(new SageApiClient(store, config, fetcher), payload)).resolves.toEqual({
+      id: "invoice-1",
+      displayed_as: "SI-1",
+    });
+    const request = vi.mocked(fetcher).mock.calls[0];
+    expect(String(request[0])).toBe("https://api.accounting.sage.com/v3.1/sales_invoices");
+    expect(request[1]?.method).toBe("POST");
+    expect(JSON.parse(String(request[1]?.body))).toEqual(payload);
   });
 });
 
