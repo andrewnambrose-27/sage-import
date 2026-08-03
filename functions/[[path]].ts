@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-6";
+const APP_ASSET_VERSION = "20260803-7";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1750,7 +1750,7 @@ function uploadPage(): string {
             </article>
           </form>
           <div class="upload-actions">
-            <button id="checkButton" type="button" disabled>Check files</button>
+            <button id="checkButton" type="button" aria-live="polite" disabled>Check files</button>
             <button id="clearButton" class="secondary-button" type="button" disabled>Clear files</button>
           </div>
         </section>
@@ -1835,12 +1835,7 @@ function uploadPage(): string {
               <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2></div>
               <p id="reviewIntro">This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.</p>
             </div>
-            <div class="button-row">
-              <button id="saveBatchButton" type="button" disabled>Save reviewed batch</button>
-              <button id="exportReviewButton" class="secondary-button" type="button" disabled>Export review CSV</button>
-            </div>
           </div>
-          <div id="reviewSaveNotice" class="notice"></div>
           <div id="reviewTotals" class="summary-cards review-totals">
             <article><strong>0</strong><span>Included rows</span></article>
             <article><strong>£0.00</strong><span>Included net</span></article>
@@ -1901,6 +1896,13 @@ function uploadPage(): string {
               </tbody>
             </table>
           </div>
+          <div class="review-footer">
+            <div id="reviewSaveNotice" class="notice"></div>
+            <div class="button-row">
+              <button id="saveBatchButton" type="button" disabled>Save reviewed batch</button>
+              <button id="exportReviewButton" class="secondary-button" type="button" disabled>Export review CSV</button>
+            </div>
+          </div>
         </section>
 
         <section class="results-panel mapping-panel" aria-live="polite">
@@ -1946,7 +1948,10 @@ function uploadPage(): string {
                   <h3>Customer matching</h3>
                   <p>Match customers from the uploaded files to existing Sage contacts. Suggested matches are never accepted automatically.</p>
                 </div>
-                <button id="addMissingContactsButton" class="secondary-button" type="button" disabled>Add all missing contacts</button>
+                <div class="customer-matching-actions">
+                  <button id="toggleCustomerMappingsButton" class="secondary-button" type="button" aria-controls="customerMappingBody" aria-expanded="false" hidden>Expand all contacts</button>
+                  <button id="addMissingContactsButton" class="secondary-button" type="button" disabled>Add all missing contacts</button>
+                </div>
               </div>
               <p class="mapping-helper">Each search starts with the imported customer name, but you can edit it to find any Sage contact. Exact matches appear first, and saved contacts can be changed later. If the customer is not there, create one with temporary TEST address details and complete the record in Sage later.</p>
               <div id="customerMappingBody" class="mapping-list">
@@ -2306,6 +2311,15 @@ h2 {
 .upload-actions button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+#checkButton.check-success {
+  background: #0b5d51;
+  box-shadow: 0 0 0 3px rgba(15, 107, 91, 0.14);
+}
+
+#checkButton.check-warning {
+  background: #8a6216;
 }
 
 .sage-card {
@@ -2671,6 +2685,16 @@ h2 {
   white-space: nowrap;
 }
 
+.review-footer {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.review-footer .notice {
+  margin-bottom: 0;
+}
+
 .notice {
   display: none;
   margin-bottom: 18px;
@@ -2974,6 +2998,13 @@ table {
   margin-top: 14px;
 }
 
+#customerMappingBody.customer-list-collapsed {
+  max-height: var(--customer-collapsed-height, 610px);
+  overflow-y: auto;
+  padding-right: 7px;
+  scrollbar-gutter: stable;
+}
+
 .mapping-row {
   display: grid;
   grid-template-columns: minmax(170px, 0.8fr) minmax(240px, 1fr) auto;
@@ -3124,6 +3155,14 @@ table {
 
 .customer-matching-heading button {
   flex: 0 0 auto;
+}
+
+.customer-matching-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .contact-saved-status {
@@ -3535,6 +3574,15 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 
+  .customer-matching-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .customer-matching-actions button {
+    width: 100%;
+  }
+
   .draft-preview-grid {
     grid-template-columns: 1fr;
   }
@@ -3596,6 +3644,7 @@ const conversionSetupSummary = document.querySelector("#conversionSetupSummary")
 const taxMappingBody = document.querySelector("#taxMappingBody");
 const ledgerMappingBody = document.querySelector("#ledgerMappingBody");
 const customerMappingBody = document.querySelector("#customerMappingBody");
+const toggleCustomerMappingsButton = document.querySelector("#toggleCustomerMappingsButton");
 const addMissingContactsButton = document.querySelector("#addMissingContactsButton");
 const draftInvoiceSection = document.querySelector("#draftInvoiceSection");
 const draftInvoiceNotice = document.querySelector("#draftInvoiceNotice");
@@ -3634,6 +3683,7 @@ const referenceOptionsBySelect = {};
 const editingCustomerMappings = new Set();
 let previewExpanded = false;
 let reconciliationExpanded = false;
+let customerMappingsExpanded = false;
 let referenceAutoRefreshAttempted = false;
 const uploadSlots = [
   {
@@ -4088,9 +4138,15 @@ customerMappingBody.addEventListener("keydown", (event) => {
 
 addMissingContactsButton.addEventListener("click", createAllMissingContacts);
 
+toggleCustomerMappingsButton.addEventListener("click", () => {
+  customerMappingsExpanded = !customerMappingsExpanded;
+  updateCustomerMappingViewport(uniqueCustomers().length);
+});
+
 checkButton.addEventListener("click", async () => {
   checkButton.disabled = true;
-  checkButton.textContent = "Checking...";
+  setCheckButtonState("checking");
+  let checkOutcome = "idle";
 
   const summaries = uploadSlots.flatMap(validateSlot);
   const selectedItems = summaries.filter((item) => !item.missing);
@@ -4129,11 +4185,12 @@ checkButton.addEventListener("click", async () => {
       resetReviewScreen();
       resultsIntro.textContent = "PDFs are not parsed in this step.";
       reconciliationIntro.textContent = "Reconciliation needs at least one CSV export and the monthly invoice report PDF.";
+      checkOutcome = "success";
       return;
     }
 
     const result = await parseCsvFiles();
-    renderParsedRows(result, pdfSummaries);
+    checkOutcome = renderParsedRows(result, pdfSummaries);
   } catch (error) {
     renderNotice("error", "The CSV files could not be parsed. Please try again or check the exports.");
     renderEmpty("Parsing failed.");
@@ -4141,7 +4198,7 @@ checkButton.addEventListener("click", async () => {
     console.error(error);
   } finally {
     updateUploadActionState();
-    checkButton.textContent = "Check files";
+    setCheckButtonState(checkOutcome);
   }
 });
 
@@ -4161,10 +4218,12 @@ clearButton.addEventListener("click", () => {
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
   reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
   clearButton.disabled = true;
+  setCheckButtonState("idle");
   updateUploadActionState();
 });
 
 function updateFieldMessage(slot) {
+  setCheckButtonState("idle");
   const files = getFiles(slot);
   document.querySelector('[data-slot="' + slot.id + '"]').classList.toggle("has-file", files.length > 0);
   document.querySelector('[data-remove-file="' + slot.id + '"]').hidden = files.length === 0;
@@ -4186,6 +4245,18 @@ function updateUploadActionState() {
   const hasFiles = uploadSlots.some((item) => getFiles(item).length > 0);
   checkButton.disabled = !hasFiles;
   clearButton.disabled = !hasFiles;
+}
+
+function setCheckButtonState(state) {
+  checkButton.classList.toggle("check-success", state === "success");
+  checkButton.classList.toggle("check-warning", state === "warning");
+  checkButton.textContent = state === "checking"
+    ? "Checking..."
+    : state === "success"
+      ? "Files checked successfully"
+      : state === "warning"
+        ? "Files checked - review needed"
+        : "Check files";
 }
 
 function updatePreviewToggle(rowCount) {
@@ -4332,7 +4403,7 @@ function renderParsedRows(result, pdfSummaries) {
     renderEmpty("No CSV rows found.");
     resetReviewScreen();
     resultsIntro.textContent = "Bad or empty CSV files are not discarded, but there were no rows to show.";
-    return;
+    return "idle";
   }
 
   if (warningCount > 0) {
@@ -4344,6 +4415,7 @@ function renderParsedRows(result, pdfSummaries) {
   }
 
   renderParsedSummaryRows(rows);
+  return warningCount > 0 ? "warning" : "success";
 }
 
 function renderParsedSummaryRows(rows) {
@@ -4706,6 +4778,8 @@ function renderCustomerMappings() {
 
   if (customers.length === 0) {
     customerMappingBody.innerHTML = '<p class="empty-state">No customer matches are needed for the currently reviewed rows.<br><small>Customers will appear here after invoice rows have been reviewed and approved.</small></p>';
+    customerMappingsExpanded = false;
+    updateCustomerMappingViewport(0);
     addMissingContactsButton.disabled = true;
     return;
   }
@@ -4765,6 +4839,37 @@ function renderCustomerMappings() {
       searchReport +
       '</div>';
   }).join("");
+  updateCustomerMappingViewport(customers.length);
+}
+
+function updateCustomerMappingViewport(customerCount) {
+  const hasOverflow = customerCount > 5;
+  toggleCustomerMappingsButton.hidden = !hasOverflow;
+
+  if (!hasOverflow) {
+    customerMappingBody.classList.remove("customer-list-collapsed");
+    customerMappingBody.style.removeProperty("--customer-collapsed-height");
+    toggleCustomerMappingsButton.setAttribute("aria-expanded", "false");
+    toggleCustomerMappingsButton.textContent = "Expand all contacts";
+    return;
+  }
+
+  toggleCustomerMappingsButton.setAttribute("aria-expanded", String(customerMappingsExpanded));
+  toggleCustomerMappingsButton.textContent = customerMappingsExpanded ? "Show 5 contacts" : "Expand all contacts";
+  customerMappingBody.classList.toggle("customer-list-collapsed", !customerMappingsExpanded);
+
+  if (customerMappingsExpanded) {
+    customerMappingBody.style.removeProperty("--customer-collapsed-height");
+    return;
+  }
+
+  const visibleRows = Array.from(customerMappingBody.children)
+    .filter((element) => element.classList.contains("mapping-row"))
+    .slice(0, 5);
+  const rowGap = Number.parseFloat(window.getComputedStyle(customerMappingBody).rowGap) || 0;
+  const visibleHeight = visibleRows.reduce((total, row) => total + row.getBoundingClientRect().height, 0) +
+    rowGap * Math.max(0, visibleRows.length - 1);
+  customerMappingBody.style.setProperty("--customer-collapsed-height", Math.ceil(visibleHeight + 2) + "px");
 }
 
 function contactSearchReportHtml(customer) {

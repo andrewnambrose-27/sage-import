@@ -25,4 +25,17 @@ describe("embedded browser application", () => {
     expect(appJs).toContain('return supportedDisplayCurrencies.has(saved) ? saved : "GBP"');
     expect(appJs).toContain('new Intl.NumberFormat("en-GB"');
   });
+
+  it("keeps the customer list compact until the user expands it", () => {
+    expect(appJs).toContain('document.querySelector("#toggleCustomerMappingsButton")');
+    expect(appJs).toContain("customerCount > 5");
+    expect(appJs).toContain('"Show 5 contacts" : "Expand all contacts"');
+    expect(appJs).toContain('classList.toggle("customer-list-collapsed"');
+  });
+
+  it("reports the file check outcome on the Check files button", () => {
+    expect(appJs).toContain('setCheckButtonState("checking")');
+    expect(appJs).toContain('"Files checked successfully"');
+    expect(appJs).toContain('"Files checked - review needed"');
+  });
 });
