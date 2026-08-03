@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-8";
+const APP_ASSET_VERSION = "20260803-9";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -2048,6 +2048,10 @@ const stylesCss = String.raw`
 
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -4041,6 +4045,10 @@ draftConfirmCheckbox.addEventListener("change", () => {
 });
 
 draftCreateButton.addEventListener("click", async () => {
+  if (!draftPreviewMatchesSelection()) {
+    await previewSelectedDraftInvoices();
+    return;
+  }
   await createSelectedDraftInvoices();
 });
 
@@ -5855,13 +5863,21 @@ function selectedReadyDraftInvoices() {
   return readyDraftInvoiceGroups().filter((invoice) => selectedDraftInvoiceIds.has(invoice.sourceInvoiceId));
 }
 
+function draftPreviewMatchesSelection() {
+  const selectedInvoices = selectedReadyDraftInvoices();
+  return draftPreparationState === "preview_valid" &&
+    selectedInvoices.length > 0 &&
+    activeDraftPreviews.length === selectedInvoices.length &&
+    activeDraftPreviews.every((preview) => selectedInvoices.some((invoice) => invoice.sourceInvoiceId === preview.sourceInvoiceId));
+}
+
 function updateDraftSelectionControls() {
   const readyInvoices = readyDraftInvoiceGroups();
   const selectedInvoices = selectedReadyDraftInvoices();
   const count = selectedInvoices.length;
   const busy = draftPreparationState === "checking" || draftPreparationState === "creating";
   const allReadySelected = readyInvoices.length > 0 && readyInvoices.every((invoice) => selectedDraftInvoiceIds.has(invoice.sourceInvoiceId));
-  const previewValid = draftPreparationState === "preview_valid" && activeDraftPreviews.length === count && count > 0;
+  const previewValid = draftPreviewMatchesSelection();
 
   draftSelectionCount.textContent = count + " of " + readyInvoices.length + " invoice" + plural(readyInvoices.length) + " selected";
   draftBatchHint.textContent = count > 0
@@ -5873,12 +5889,19 @@ function updateDraftSelectionControls() {
   draftDryRunButton.textContent = draftPreparationState === "checking"
     ? "Checking " + count + " draft" + plural(count) + "..."
     : "Check selected draft details (" + count + ")";
-  draftCreateControls.hidden = !previewValid && draftPreparationState !== "creating";
-  draftConfirmText.textContent = "I confirm " + count + " selected draft" + plural(count) + " should be created in Sage.";
+  draftCreateControls.hidden = count === 0 && draftPreparationState !== "creating";
+  draftConfirmCheckbox.disabled = !previewValid || busy;
+  draftConfirmText.textContent = previewValid
+    ? "I confirm " + count + " selected draft" + plural(count) + " should be created in Sage."
+    : "Check the selected draft details before confirming creation.";
   draftCreateButton.textContent = draftPreparationState === "creating"
     ? "Creating drafts..."
-    : "Create " + count + " draft" + plural(count) + " in Sage";
-  draftCreateButton.disabled = !previewValid || busy;
+    : draftPreparationState === "checking"
+      ? "Checking " + count + " draft" + plural(count) + "..."
+      : previewValid
+        ? "Create " + count + " draft" + plural(count) + " in Sage"
+        : "Check " + count + " draft" + plural(count) + " details to continue";
+  draftCreateButton.disabled = count === 0 || busy;
 }
 
 function invalidateDraftBatchPreview(message) {
@@ -5886,8 +5909,8 @@ function invalidateDraftBatchPreview(message) {
   activeDraftPreviewFailures = [];
   draftPreparationState = selectedDraftInvoiceIds.size > 0 ? "preview_stale" : "no_invoices_selected";
   draftConfirmCheckbox.checked = false;
-  draftCreateControls.hidden = true;
-  draftInvoiceWorkspace.hidden = true;
+  draftCreateControls.hidden = selectedDraftInvoiceIds.size === 0;
+  draftInvoiceWorkspace.hidden = selectedDraftInvoiceIds.size === 0;
   draftInvoicePreview.innerHTML = "";
   if (message) {
     renderDraftNotice("", message);
@@ -5979,11 +6002,7 @@ async function previewSelectedDraftInvoices() {
 }
 
 async function createSelectedDraftInvoices() {
-  const selectedInvoices = selectedReadyDraftInvoices();
-  const previewMatchesSelection = draftPreparationState === "preview_valid" &&
-    activeDraftPreviews.length === selectedInvoices.length &&
-    activeDraftPreviews.every((preview) => selectedInvoices.some((invoice) => invoice.sourceInvoiceId === preview.sourceInvoiceId));
-  if (!previewMatchesSelection) {
+  if (!draftPreviewMatchesSelection()) {
     renderDraftNotice("error", "The selected invoices have changed. Check the selected draft details again before creating them in Sage.");
     updateDraftSelectionControls();
     return;
