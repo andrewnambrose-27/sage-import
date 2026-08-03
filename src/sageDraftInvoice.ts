@@ -29,7 +29,7 @@ export interface SageSalesInvoicePayload {
   sales_invoice: {
     contact_id: string;
     date: string;
-    due_date: string;
+    due_date?: string;
     reference: string;
     invoice_lines: Array<{
       description: string;
@@ -41,6 +41,11 @@ export interface SageSalesInvoicePayload {
       eu_goods_services_type_id: "2";
     }>;
   };
+}
+
+export function omitSageDueDate(payload: SageSalesInvoicePayload): SageSalesInvoicePayload {
+  const { due_date: _dueDate, ...salesInvoice } = payload.sales_invoice;
+  return { sales_invoice: salesInvoice };
 }
 
 export const sageEuGoodsServicesTypeIds = {

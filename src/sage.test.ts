@@ -7,12 +7,14 @@ import {
   SageReferenceFetchError,
   SageResponseShapeError,
   SageTokenExchangeError,
+  createCompatibleSageDraftInvoice,
   createSageDraftInvoice,
   decryptTokenPair,
   encryptTokenPair,
   exchangeAuthorizationCode,
   expiryFromNow,
   formatSageBusinessHeader,
+  isSageStartDueDateRestriction,
   fetchSageLedgerAccounts,
   fetchSageTaxRates,
   searchSageContacts,
@@ -326,6 +328,50 @@ describe("Sage contact search", () => {
 });
 
 describe("Sage draft invoices", () => {
+  it("recognizes the UK Accounting Start due-date restriction precisely", () => {
+    expect(isSageStartDueDateRestriction(new SageDraftInvoiceRequestError(
+      422,
+      "The request contained parameters that are restricted for Start in United Kingdom [due_date]",
+    ))).toBe(true);
+    expect(isSageStartDueDateRestriction(new SageDraftInvoiceRequestError(422, "A tax rate is invalid."))).toBe(false);
+  });
+
+  it("retries a UK Accounting Start draft without the restricted due date", async () => {
+    const store = new MemorySageStore(connectionRecord());
+    await store.replaceTokens("access-token", "refresh-token");
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        $message: "The request contained parameters that are restricted for Start in United Kingdom [due_date]",
+      }, { status: 422 }))
+      .mockResolvedValueOnce(jsonResponse({ id: "invoice-1", displayed_as: "SI-1" }, { status: 201 })) as unknown as typeof fetch;
+    const payload = {
+      sales_invoice: {
+        contact_id: "contact-1",
+        date: "2026-05-22",
+        due_date: "2026-06-21",
+        reference: "RM inv no.4630",
+        invoice_lines: [{
+          description: "Removal",
+          quantity: 1,
+          unit_price: 690,
+          tax_amount: 0,
+          ledger_account_id: "ledger-4010",
+          tax_rate_id: "tax-no-vat",
+          eu_goods_services_type_id: "2" as const,
+        }],
+      },
+    };
+
+    await expect(createCompatibleSageDraftInvoice(new SageApiClient(store, config, fetcher), payload)).resolves.toEqual({
+      result: { id: "invoice-1", displayed_as: "SI-1" },
+      dueDateOmitted: true,
+    });
+    const firstBody = JSON.parse(String(vi.mocked(fetcher).mock.calls[0][1]?.body));
+    const secondBody = JSON.parse(String(vi.mocked(fetcher).mock.calls[1][1]?.body));
+    expect(firstBody.sales_invoice.due_date).toBe("2026-06-21");
+    expect(secondBody.sales_invoice).not.toHaveProperty("due_date");
+  });
+
   it("requests the invoice reference needed for duplicate protection", async () => {
     const store = new MemorySageStore(connectionRecord());
     await store.replaceTokens("access-token", "refresh-token");

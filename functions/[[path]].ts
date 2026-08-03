@@ -21,7 +21,7 @@ import {
   normalizeSageLedgerAccount,
   normalizeSageTaxRate,
   createSagePlaceholderCustomer,
-  createSageDraftInvoice,
+  createCompatibleSageDraftInvoice,
   searchSageSalesInvoices,
   SageDraftInvoiceRequestError,
   SageContactRequestError,
@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-5";
+const APP_ASSET_VERSION = "20260803-6";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -920,7 +920,9 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
     }
     reservedForCreate = true;
 
-    const sageResult = await createSageDraftInvoice(client.value, prepared.preview.payload);
+    const compatibleResult = await createCompatibleSageDraftInvoice(client.value, prepared.preview.payload);
+    const sageResult = compatibleResult.result;
+    const dueDateOmitted = compatibleResult.dueDateOmitted;
     const sageInvoiceId = sageInvoiceIdFromResult(sageResult);
     if (!sageInvoiceId) {
       await database.value.markSageImportUncertain(prepared.sourceInvoiceId, "Sage accepted the request but did not return a draft invoice ID. Check Sage before trying again.");
@@ -935,7 +937,10 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
       sage_invoice_reference: sageInvoiceReferenceFromResult(sageResult) ?? prepared.preview.invoice_reference,
       source_invoice_number: prepared.preview.invoice_reference,
       total_minor: prepared.preview.totals.gross_minor,
-      message: "One Sage draft invoice was created. It has not been sent, released or published.",
+      due_date_omitted: dueDateOmitted,
+      message: dueDateOmitted
+        ? "One Sage draft invoice was created. Sage Accounting Start does not allow the API to set its due date, so check the due date in Sage before sending."
+        : "One Sage draft invoice was created. It has not been sent, released or published.",
     });
   } catch (error) {
     if (error instanceof SageDraftInvoiceRequestError) {
@@ -5870,6 +5875,7 @@ async function createSelectedDraftInvoices() {
           ok: true,
           invoiceNumber: item.invoiceNumber,
           foundExisting: Boolean(result.found_existing),
+          dueDateOmitted: Boolean(result.due_date_omitted),
           reference: result.sage_invoice_reference || result.sage_invoice_id || item.invoiceNumber,
         });
         selectedDraftInvoiceIds.delete(item.sourceInvoiceId);
@@ -5917,7 +5923,8 @@ function renderDraftBatchResults(results, total) {
     if (!result.ok) {
       return '<article class="draft-result-item error"><h3>Invoice ' + escapeHtml(result.invoiceNumber) + '</h3><strong>' + (result.uncertain ? 'Check Sage before retrying' : 'Draft not created') + '</strong><p>' + escapeHtml(result.message) + '</p></article>';
     }
-    return '<article class="draft-result-item success"><h3>Invoice ' + escapeHtml(result.invoiceNumber) + '</h3><strong>' + (result.foundExisting ? 'Existing Sage invoice found; no duplicate created' : 'Draft created in Sage') + '</strong><p>Reference: ' + escapeHtml(result.reference) + '</p></article>';
+    const dueDateNotice = result.dueDateOmitted ? '<p>Sage Accounting Start set the due date using its own defaults. Check it in Sage before sending.</p>' : '';
+    return '<article class="draft-result-item success"><h3>Invoice ' + escapeHtml(result.invoiceNumber) + '</h3><strong>' + (result.foundExisting ? 'Existing Sage invoice found; no duplicate created' : 'Draft created in Sage') + '</strong><p>Reference: ' + escapeHtml(result.reference) + '</p>' + dueDateNotice + '</article>';
   }).join("");
 }
 

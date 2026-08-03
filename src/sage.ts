@@ -1,3 +1,5 @@
+import { omitSageDueDate, type SageSalesInvoicePayload } from "./sageDraftInvoice";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const refreshLeadTimeMs = 5 * 60 * 1000;
@@ -662,6 +664,18 @@ export async function createSageDraftInvoice(client: SageApiClient, payload: unk
   return response.json();
 }
 
+export async function createCompatibleSageDraftInvoice(
+  client: SageApiClient,
+  payload: SageSalesInvoicePayload,
+): Promise<{ result: unknown; dueDateOmitted: boolean }> {
+  try {
+    return { result: await createSageDraftInvoice(client, payload), dueDateOmitted: false };
+  } catch (error) {
+    if (!isSageStartDueDateRestriction(error)) throw error;
+    return { result: await createSageDraftInvoice(client, omitSageDueDate(payload)), dueDateOmitted: true };
+  }
+}
+
 async function sageRequestErrorDetail(response: Response): Promise<string | null> {
   let body: unknown;
   try {
@@ -714,6 +728,13 @@ export class SageDraftInvoiceRequestError extends Error {
     super("Sage rejected the draft invoice.");
     this.name = "SageDraftInvoiceRequestError";
   }
+}
+
+export function isSageStartDueDateRestriction(error: unknown): error is SageDraftInvoiceRequestError {
+  return error instanceof SageDraftInvoiceRequestError
+    && error.status === 422
+    && /restricted for Start in United Kingdom/i.test(error.detail ?? "")
+    && /\[due_date\]/i.test(error.detail ?? "");
 }
 
 export class SageContactRequestError extends Error {

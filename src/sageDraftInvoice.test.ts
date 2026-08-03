@@ -5,6 +5,7 @@ import {
   buildSageDraftInvoice,
   DraftInvoiceValidationError,
   minorUnitsToSageNumber,
+  omitSageDueDate,
 } from "./sageDraftInvoice";
 
 describe("Sage draft invoice payload", () => {
@@ -47,6 +48,22 @@ describe("Sage draft invoice payload", () => {
       lines: [{ source: sourceLine(), mapping: mapping() }],
     });
     expect(apiRequest).not.toHaveBeenCalled();
+  });
+
+  it("can omit the due date for UK Sage Accounting Start without changing the preview payload", () => {
+    const preview = buildSageDraftInvoice({
+      contactId: "contact-1",
+      contactName: "Acme Ltd",
+      invoiceNumber: "4632",
+      invoiceDate: "2026-07-01",
+      dueDate: "2026-07-31",
+      lines: [{ source: sourceLine(), mapping: mapping() }],
+    });
+
+    const compatiblePayload = omitSageDueDate(preview.payload);
+
+    expect(compatiblePayload.sales_invoice).not.toHaveProperty("due_date");
+    expect(preview.payload.sales_invoice.due_date).toBe("2026-07-31");
   });
 
   it("rejects storage invoices", () => {
