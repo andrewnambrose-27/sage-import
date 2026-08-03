@@ -11,6 +11,9 @@ describe("embedded browser application", () => {
     expect(appJs).toContain("createSelectedDraftInvoices");
     expect(appJs).toContain('document.querySelector("#draftBatchActions")');
     expect(appJs).toContain("Select at least one Sage-ready invoice first.");
+    expect(appJs).toContain('draftCreateButton.disabled = !previewValid || busy');
+    expect(appJs).toContain("Tick the confirmation box before creating the selected drafts in Sage.");
+    expect(appJs).toContain("activeDraftPreviews.every");
   });
 
   it("offers to refresh older saved customer details before draft creation", () => {

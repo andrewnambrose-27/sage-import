@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-7";
+const APP_ASSET_VERSION = "20260803-8";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1985,6 +1985,7 @@ function uploadPage(): string {
           <div id="draftInvoiceWorkspace" class="draft-workspace" hidden>
             <div id="draftInvoicePreview" class="draft-preview"></div>
             <div id="draftCreateControls" class="draft-controls draft-create-controls" hidden>
+              <div class="draft-final-step-copy"><span>Final step</span><strong>Create the selected Sage drafts</strong></div>
               <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> <span id="draftConfirmText">I confirm the selected drafts should be created in Sage.</span></label>
               <button id="draftCreateButton" type="button" disabled>Create selected drafts in Sage</button>
             </div>
@@ -3329,12 +3330,55 @@ table {
 }
 
 .draft-create-controls {
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(250px, 1.15fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px;
+  border-color: rgba(15, 107, 91, 0.32);
+  background: linear-gradient(110deg, #eff9f5, #f8fbfa);
+}
+
+.draft-final-step-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.draft-final-step-copy span {
+  color: var(--sage-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.draft-final-step-copy strong {
+  font-size: 1rem;
+}
+
+#draftCreateButton {
+  min-width: 280px;
+  min-height: 58px;
+  padding: 0 24px;
+  border: 2px solid #0a4a42;
+  background: #0a5b4f;
+  box-shadow: 0 8px 18px rgba(10, 74, 66, 0.22);
+  font-size: 1.05rem;
+}
+
+#draftCreateButton:hover:not(:disabled) {
+  background: #073e38;
+  box-shadow: 0 10px 22px rgba(10, 74, 66, 0.28);
+  transform: translateY(-1px);
+}
+
+#draftCreateButton:disabled {
+  box-shadow: none;
 }
 
 .confirm-control {
   display: inline-flex;
-  max-width: 300px;
+  max-width: 360px;
   gap: 8px;
   align-items: flex-start;
   color: var(--ink);
@@ -3585,6 +3629,15 @@ tr.risky-row.high-risk {
 
   .draft-preview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .draft-create-controls {
+    grid-template-columns: 1fr;
+  }
+
+  #draftCreateButton {
+    width: 100%;
+    min-width: 0;
   }
 
   .draft-ready-header,
@@ -5825,7 +5878,7 @@ function updateDraftSelectionControls() {
   draftCreateButton.textContent = draftPreparationState === "creating"
     ? "Creating drafts..."
     : "Create " + count + " draft" + plural(count) + " in Sage";
-  draftCreateButton.disabled = !previewValid || !draftConfirmCheckbox.checked || busy;
+  draftCreateButton.disabled = !previewValid || busy;
 }
 
 function invalidateDraftBatchPreview(message) {
@@ -5927,7 +5980,17 @@ async function previewSelectedDraftInvoices() {
 
 async function createSelectedDraftInvoices() {
   const selectedInvoices = selectedReadyDraftInvoices();
-  if (draftPreparationState !== "preview_valid" || activeDraftPreviews.length !== selectedInvoices.length || !draftConfirmCheckbox.checked) {
+  const previewMatchesSelection = draftPreparationState === "preview_valid" &&
+    activeDraftPreviews.length === selectedInvoices.length &&
+    activeDraftPreviews.every((preview) => selectedInvoices.some((invoice) => invoice.sourceInvoiceId === preview.sourceInvoiceId));
+  if (!previewMatchesSelection) {
+    renderDraftNotice("error", "The selected invoices have changed. Check the selected draft details again before creating them in Sage.");
+    updateDraftSelectionControls();
+    return;
+  }
+  if (!draftConfirmCheckbox.checked) {
+    renderDraftNotice("error", "Tick the confirmation box before creating the selected drafts in Sage.");
+    draftConfirmCheckbox.focus();
     return;
   }
   const count = activeDraftPreviews.length;
