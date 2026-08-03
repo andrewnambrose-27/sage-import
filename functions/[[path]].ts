@@ -59,7 +59,7 @@ const SESSION_COOKIE = "sage_import_session";
 const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const APP_ASSET_VERSION = "20260803-1";
+const APP_ASSET_VERSION = "20260803-2";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -856,7 +856,7 @@ async function handleSageDraftCreate(request: Request, env: Env): Promise<Respon
 
   const body = await request.json() as { source_invoice_id?: string; due_date?: string; confirmed?: boolean; preview_fingerprint?: string };
   if (body.confirmed !== true) {
-    return jsonResponse({ ok: false, error: "Confirm this one draft invoice before creating it in Sage." }, 400);
+    return jsonResponse({ ok: false, error: "Confirm the draft invoice before creating it in Sage." }, 400);
   }
 
   const prepared = await prepareSageDraftInvoice(database.value, await activeSageBusinessId(env), body.source_invoice_id ?? "", body.due_date ?? "");
@@ -1918,23 +1918,25 @@ function uploadPage(): string {
         <section id="draftInvoiceSection" class="results-panel draft-panel" aria-live="polite">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">5</span><h2>Prepare one Sage draft invoice</h2></div>
-              <p>Choose a saved, Sage-ready invoice below. This stage creates a draft only; it never sends, releases or publishes an invoice.</p>
+              <div class="step-title"><span class="step-badge">5</span><h2>Create Sage draft invoices</h2></div>
+              <p>Review every saved, Sage-ready invoice below, select the ones you want, then check and create the selected drafts together. Drafts are never sent, released or published.</p>
             </div>
           </div>
           <div id="draftInvoiceNotice" class="notice"></div>
-          <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then choose a Sage-ready invoice here.</div>
+          <div id="draftInvoiceEmpty" class="draft-empty">Save the reviewed batch, then select one or more Sage-ready invoices here.</div>
           <div id="draftInvoiceWorkspace" class="draft-workspace" hidden>
-            <div class="draft-controls">
-              <label>Due date
-                <input id="draftDueDate" type="date">
-              </label>
-              <button id="draftDryRunButton" type="button">Check draft details</button>
-              <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> I confirm this one draft should be created in Sage.</label>
-              <button id="draftCreateButton" type="button" disabled>Create draft in Sage</button>
+            <div class="draft-controls draft-batch-controls">
+              <button id="draftSelectAllButton" class="secondary-button" type="button">Select all ready</button>
+              <button id="draftClearSelectionButton" class="secondary-button" type="button" disabled>Clear selection</button>
+              <strong id="draftSelectionCount" class="draft-selection-count">0 selected</strong>
+              <button id="draftDryRunButton" type="button" disabled>Check selected draft details</button>
             </div>
-            <p class="cell-muted">This creates one editable draft in Sage. It does not send it to the customer or record payment.</p>
             <div id="draftInvoicePreview" class="draft-preview"></div>
+            <div id="draftCreateControls" class="draft-controls draft-create-controls" hidden>
+              <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> <span id="draftConfirmText">I confirm the selected drafts should be created in Sage.</span></label>
+              <button id="draftCreateButton" type="button" disabled>Create selected drafts in Sage</button>
+            </div>
+            <p class="cell-muted">Each selected invoice becomes a separate editable draft in Sage. No email is sent and no payment is recorded.</p>
           </div>
         </section>
       </main>
@@ -3076,26 +3078,102 @@ table {
 
 .draft-ready-list {
   display: grid;
-  gap: 10px;
+  gap: 14px;
   margin-top: 12px;
 }
 
 .draft-ready-invoice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
   color: var(--ink);
 }
 
-.draft-ready-invoice span {
+.draft-ready-invoice.selected {
+  border-color: #75b9aa;
+  box-shadow: 0 0 0 2px rgb(117 185 170 / 18%);
+  background: #f4fbf8;
+}
+
+.draft-ready-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(150px, auto);
+  align-items: center;
+  gap: 12px;
+}
+
+.draft-select-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.draft-select-control input {
+  width: 20px;
+  height: 20px;
+}
+
+.draft-ready-title {
+  display: grid;
+  gap: 3px;
+}
+
+.draft-ready-invoice span,
+.draft-ready-invoice small {
   color: var(--muted);
   font-weight: 650;
+}
+
+.draft-due-date {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.draft-due-date input {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.draft-source-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.draft-source-summary article {
+  padding: 10px;
+  border-radius: 7px;
+  background: #f4f7f6;
+}
+
+.draft-source-summary span,
+.draft-source-summary strong {
+  display: block;
+}
+
+.draft-source-summary span {
+  font-size: 0.76rem;
+}
+
+.draft-source-summary strong {
+  margin-top: 4px;
+}
+
+.draft-source-line-table {
+  min-width: 900px;
+  font-size: 0.9rem;
 }
 
 .draft-controls {
@@ -3127,6 +3205,22 @@ table {
   font: inherit;
 }
 
+.draft-batch-controls {
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
+  box-shadow: 0 8px 24px rgb(25 55 49 / 12%);
+}
+
+.draft-selection-count {
+  margin-right: auto;
+  color: var(--ink);
+}
+
+.draft-create-controls {
+  justify-content: flex-end;
+}
+
 .confirm-control {
   display: inline-flex;
   max-width: 300px;
@@ -3140,6 +3234,31 @@ table {
 .draft-preview {
   display: grid;
   gap: 14px;
+}
+
+.draft-preview-item,
+.draft-result-item {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbfa;
+}
+
+.draft-preview-item > h3,
+.draft-result-item > h3 {
+  margin: 0;
+}
+
+.draft-result-item.success {
+  border-color: #84c4b6;
+  background: #eff9f6;
+}
+
+.draft-result-item.error {
+  border-color: #d9a6a6;
+  background: #fff6f6;
 }
 
 .draft-preview-grid {
@@ -3330,6 +3449,11 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 
+  .draft-ready-header,
+  .draft-source-summary {
+    grid-template-columns: 1fr;
+  }
+
   .status-stack {
     min-width: 0;
   }
@@ -3347,7 +3471,7 @@ tr.risky-row.high-risk {
 }
 `;
 
-const appJs = String.raw`
+export const appJs = String.raw`
 const uploadForm = document.querySelector("#uploadForm");
 const summaryBody = document.querySelector("#summaryBody");
 const summaryNotice = document.querySelector("#summaryNotice");
@@ -3386,21 +3510,26 @@ const draftInvoiceSection = document.querySelector("#draftInvoiceSection");
 const draftInvoiceNotice = document.querySelector("#draftInvoiceNotice");
 const draftInvoiceEmpty = document.querySelector("#draftInvoiceEmpty");
 const draftInvoiceWorkspace = document.querySelector("#draftInvoiceWorkspace");
-const draftDueDate = document.querySelector("#draftDueDate");
+const draftSelectAllButton = document.querySelector("#draftSelectAllButton");
+const draftClearSelectionButton = document.querySelector("#draftClearSelectionButton");
+const draftSelectionCount = document.querySelector("#draftSelectionCount");
 const draftDryRunButton = document.querySelector("#draftDryRunButton");
+const draftCreateControls = document.querySelector("#draftCreateControls");
 const draftConfirmCheckbox = document.querySelector("#draftConfirmCheckbox");
+const draftConfirmText = document.querySelector("#draftConfirmText");
 const draftCreateButton = document.querySelector("#draftCreateButton");
 const draftInvoicePreview = document.querySelector("#draftInvoicePreview");
 
 const maxFileSizeBytes = 20 * 1024 * 1024;
+const maxDraftBatchSize = 25;
 let reviewRows = [];
 let activeReviewFilter = "all";
 let latestOriginalFileNames = [];
 let sageReferences = emptySageReferences();
-let activeDraftSourceInvoiceId = null;
-let activeDraftPreview = null;
-let activeDraftFingerprint = null;
-let draftPreparationState = "no_invoice_selected";
+const selectedDraftInvoiceIds = new Set();
+const draftDueDates = new Map();
+let activeDraftPreviews = [];
+let draftPreparationState = "no_invoices_selected";
 const referenceOptionsBySelect = {};
 const editingCustomerMappings = new Set();
 let previewExpanded = false;
@@ -3575,11 +3704,38 @@ reviewBody.addEventListener("click", (event) => {
 });
 
 draftInvoiceEmpty.addEventListener("click", (event) => {
-  const button = event.target instanceof Element ? event.target.closest("[data-preview-draft]") : null;
-  if (!button) {
+  const selectButton = event.target instanceof Element ? event.target.closest("[data-select-single-draft]") : null;
+  if (!selectButton) {
     return;
   }
-  previewDraftInvoice(button.dataset.previewDraft || "");
+  previewDraftInvoice(selectButton.dataset.selectSingleDraft || "");
+});
+
+draftInvoiceEmpty.addEventListener("change", (event) => {
+  const checkbox = event.target instanceof Element ? event.target.closest("[data-select-draft]") : null;
+  if (checkbox) {
+    const sourceInvoiceId = checkbox.dataset.selectDraft || "";
+    if (checkbox.checked && selectedDraftInvoiceIds.size >= maxDraftBatchSize && !selectedDraftInvoiceIds.has(sourceInvoiceId)) {
+      checkbox.checked = false;
+      renderDraftNotice("error", "You can create up to " + maxDraftBatchSize + " drafts in one batch. Create these first, then select the remainder.");
+      return;
+    }
+    if (checkbox.checked) {
+      selectedDraftInvoiceIds.add(sourceInvoiceId);
+    } else {
+      selectedDraftInvoiceIds.delete(sourceInvoiceId);
+    }
+    invalidateDraftBatchPreview("Selection changed. Check the selected draft details before creating them in Sage.");
+    updateDraftEmptyGuidance();
+    return;
+  }
+
+  const dueDateInput = event.target instanceof Element ? event.target.closest("[data-draft-due-date]") : null;
+  if (dueDateInput) {
+    draftDueDates.set(dueDateInput.dataset.draftDueDate || "", dueDateInput.value);
+    invalidateDraftBatchPreview("A due date changed. Check the selected draft details again before creating them in Sage.");
+    updateDraftSelectionControls();
+  }
 });
 
 conversionSetupSummary.addEventListener("click", (event) => {
@@ -3643,66 +3799,34 @@ saveBatchButton.addEventListener("click", async () => {
   }
 });
 
-draftDryRunButton.addEventListener("click", () => {
-  if (activeDraftSourceInvoiceId) {
-    previewDraftInvoice(activeDraftSourceInvoiceId);
+draftSelectAllButton.addEventListener("click", () => {
+  const readyInvoices = readyDraftInvoiceGroups();
+  selectedDraftInvoiceIds.clear();
+  for (const invoice of readyInvoices.slice(0, maxDraftBatchSize)) {
+    selectedDraftInvoiceIds.add(invoice.sourceInvoiceId);
   }
+  invalidateDraftBatchPreview(readyInvoices.length > maxDraftBatchSize
+    ? "Selected the first " + maxDraftBatchSize + " ready invoices. Create these first, then select the remainder."
+    : "All ready invoices selected. Check their draft details before creating them in Sage.");
+  updateDraftEmptyGuidance();
 });
 
-draftDueDate.addEventListener("change", () => {
-  activeDraftPreview = null;
-  activeDraftFingerprint = null;
-  draftPreparationState = "preview_stale";
-  draftCreateButton.disabled = true;
-  renderDraftNotice("error", "Draft details changed. Check the updated preview before creating the Sage draft.");
+draftClearSelectionButton.addEventListener("click", () => {
+  selectedDraftInvoiceIds.clear();
+  invalidateDraftBatchPreview("");
+  updateDraftEmptyGuidance();
+});
+
+draftDryRunButton.addEventListener("click", () => {
+  previewSelectedDraftInvoices();
 });
 
 draftConfirmCheckbox.addEventListener("change", () => {
-  draftCreateButton.disabled = draftPreparationState !== "preview_valid" || !activeDraftPreview || !activeDraftFingerprint || !draftConfirmCheckbox.checked;
+  updateDraftSelectionControls();
 });
 
 draftCreateButton.addEventListener("click", async () => {
-  if (!activeDraftSourceInvoiceId || !activeDraftPreview || !activeDraftFingerprint || draftPreparationState !== "preview_valid" || !draftConfirmCheckbox.checked) {
-    return;
-  }
-  if (!window.confirm("Create one draft invoice in Sage? It will not be sent, released or published.")) {
-    return;
-  }
-
-  draftCreateButton.disabled = true;
-  draftPreparationState = "creating";
-  draftCreateButton.textContent = "Creating draft...";
-  try {
-    const response = await fetch("/api/sage/drafts/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source_invoice_id: activeDraftSourceInvoiceId,
-        due_date: draftDueDate.value,
-        preview_fingerprint: activeDraftFingerprint,
-        confirmed: true,
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok || !result.ok) {
-      draftPreparationState = "failed";
-      renderDraftNotice("error", result.error || "The Sage draft invoice could not be created.");
-      return;
-    }
-    const prefix = result.found_existing ? "No new draft was created." : "One draft invoice was created.";
-    draftPreparationState = "created";
-    renderDraftNotice("success", "Draft invoice created in Sage. " + prefix + " Reference: " + (result.sage_invoice_reference || result.sage_invoice_id) + ". No email was sent and no payment was recorded.");
-    activeDraftPreview = null;
-    activeDraftFingerprint = null;
-    draftConfirmCheckbox.checked = false;
-    await refreshSageReadiness();
-  } catch (error) {
-    draftPreparationState = "failed";
-    renderDraftNotice("error", "The Sage draft invoice result could not be confirmed. Check Sage before trying again.");
-    console.error(error);
-  } finally {
-    draftCreateButton.textContent = "Create draft in Sage";
-  }
+  await createSelectedDraftInvoices();
 });
 
 sageDisconnectButton.addEventListener("click", async () => {
@@ -4247,11 +4371,34 @@ function renderReviewTable() {
 }
 
 function updateDraftEmptyGuidance() {
-  if (activeDraftSourceInvoiceId || !draftInvoiceWorkspace.hidden) {
+  const readyInvoices = readyDraftInvoiceGroups();
+  const readyIds = new Set(readyInvoices.map((invoice) => invoice.sourceInvoiceId));
+  for (const selectedId of selectedDraftInvoiceIds) {
+    if (!readyIds.has(selectedId)) {
+      selectedDraftInvoiceIds.delete(selectedId);
+    }
+  }
+
+  if (readyInvoices.length > 0) {
+    for (const invoice of readyInvoices) {
+      if (!draftDueDates.has(invoice.sourceInvoiceId)) {
+        draftDueDates.set(invoice.sourceInvoiceId, datePlusDays(invoice.invoiceDate, 30));
+      }
+    }
+    draftInvoiceEmpty.innerHTML =
+      '<strong>' + readyInvoices.length + ' invoice' + plural(readyInvoices.length) + ' ready to create as Sage drafts.</strong>' +
+      '<p class="cell-muted">Select any combination below. You can set a separate due date for each invoice and inspect every source line before checking the final Sage conversion.</p>' +
+      '<div class="draft-ready-list">' + readyInvoices.map(renderReadyDraftInvoice).join("") + '</div>';
+    draftInvoiceEmpty.hidden = false;
+    draftInvoiceWorkspace.hidden = false;
+    updateDraftSelectionControls();
     return;
   }
+
+  draftInvoiceEmpty.hidden = false;
+  draftInvoiceWorkspace.hidden = true;
   if (reviewRows.length === 0) {
-    draftInvoiceEmpty.textContent = "Check the uploaded files and review at least one invoice before preparing a Sage draft.";
+    draftInvoiceEmpty.textContent = "Check the uploaded files and review at least one invoice before preparing Sage drafts.";
     return;
   }
   const savedRows = reviewRows.filter((row) => row.source_invoice_id);
@@ -4259,29 +4406,7 @@ function updateDraftEmptyGuidance() {
     draftInvoiceEmpty.textContent = "Choose Include for the invoice rows you want, then save the reviewed batch.";
     return;
   }
-  const groupedInvoices = new Map();
-  for (const row of savedRows) {
-    const key = row.invoice_number || row.source_invoice_id;
-    const group = groupedInvoices.get(key) || [];
-    group.push(row);
-    groupedInvoices.set(key, group);
-  }
-  const readyInvoices = Array.from(groupedInvoices.values())
-    .filter((lines) => lines.every((line) => line.sage_readiness === "ready_for_sage"))
-    .map((lines) => ({
-      row: lines[0],
-      gross: lines.reduce((total, line) => total + grossAmount(line), 0),
-    }));
-  if (readyInvoices.length > 0) {
-    draftInvoiceEmpty.innerHTML =
-      '<strong>' + readyInvoices.length + ' invoice' + plural(readyInvoices.length) + ' ready to create as a Sage draft.</strong>' +
-      '<div class="draft-ready-list">' + readyInvoices.map(({ row, gross }) =>
-        '<div class="draft-ready-invoice"><div><strong>Invoice ' + escapeHtml(row.invoice_number || "-") + '</strong><br><span>' +
-        escapeHtml(row.customer_name || "Unknown customer") + ' · ' + escapeHtml(formatMoney(gross)) +
-        '</span></div><button type="button" data-preview-draft="' + escapeHtml(row.source_invoice_id) + '">Preview draft</button></div>'
-      ).join("") + '</div>';
-    return;
-  }
+
   const missingContacts = savedRows.filter((row) => row.sage_readiness === "missing_contact_mapping").length;
   const missingTax = savedRows.filter((row) => row.sage_readiness === "missing_tax_mapping").length;
   const missingLedger = savedRows.filter((row) => row.sage_readiness === "missing_ledger_mapping").length;
@@ -4294,6 +4419,68 @@ function updateDraftEmptyGuidance() {
   draftInvoiceEmpty.textContent = reasons.length
     ? "No saved invoice is Sage-ready yet: " + reasons.join(", ") + "."
     : "No saved invoice is Sage-ready yet. Review the readiness column above.";
+}
+
+function readyDraftInvoiceGroups() {
+  const groupedInvoices = new Map();
+  for (const row of reviewRows.filter((item) => item.source_invoice_id)) {
+    const key = row.invoice_number || row.source_invoice_id;
+    const group = groupedInvoices.get(key) || [];
+    group.push(row);
+    groupedInvoices.set(key, group);
+  }
+
+  return Array.from(groupedInvoices.values())
+    .filter((lines) => lines.every((line) => line.sage_readiness === "ready_for_sage"))
+    .map((lines) => ({
+      sourceInvoiceId: lines[0].source_invoice_id,
+      invoiceNumber: lines[0].invoice_number || "-",
+      customerName: lines[0].customer_name || "Unknown customer",
+      invoiceDate: lines[0].date || "",
+      lines,
+      net: lines.reduce((total, line) => total + numericAmount(line.amount), 0),
+      vat: lines.reduce((total, line) => total + numericAmount(line.vat_amount), 0),
+      gross: lines.reduce((total, line) => total + grossAmount(line), 0),
+    }));
+}
+
+function renderReadyDraftInvoice(invoice) {
+  const selected = selectedDraftInvoiceIds.has(invoice.sourceInvoiceId);
+  const dueDate = draftDueDates.get(invoice.sourceInvoiceId) || datePlusDays(invoice.invoiceDate, 30);
+  const rows = invoice.lines.map((line) => '<tr>' +
+    tableCell(line.description || "-") +
+    tableCell(line.service_type || "-") +
+    tableCell(draftSourceMappingLabel("tax", line.tax_code, line.transaction_type)) +
+    tableCell(draftSourceMappingLabel("ledger", line.nominal_code, line.transaction_type)) +
+    tableCell(formatMoney(line.amount)) +
+    tableCell(formatMoney(line.vat_amount)) +
+    tableCell(formatMoney(grossAmount(line))) +
+    '</tr>').join("");
+
+  return '<article class="draft-ready-invoice' + (selected ? ' selected' : '') + '">' +
+    '<div class="draft-ready-header">' +
+      '<label class="draft-select-control"><input type="checkbox" data-select-draft="' + escapeHtml(invoice.sourceInvoiceId) + '"' + (selected ? ' checked' : '') + '> Select</label>' +
+      '<div class="draft-ready-title"><strong>Invoice ' + escapeHtml(invoice.invoiceNumber) + '</strong><span>' + escapeHtml(invoice.customerName) + ' &middot; Invoice date ' + escapeHtml(invoice.invoiceDate || "-") + ' &middot; ' + invoice.lines.length + ' line' + plural(invoice.lines.length) + '</span></div>' +
+      '<label class="draft-due-date">Due date<input type="date" data-draft-due-date="' + escapeHtml(invoice.sourceInvoiceId) + '" value="' + escapeHtml(dueDate) + '" required></label>' +
+    '</div>' +
+    '<div class="draft-source-summary">' +
+      draftPreviewCard("Net", formatMoney(invoice.net)) +
+      draftPreviewCard("VAT", formatMoney(invoice.vat)) +
+      draftPreviewCard("Gross", formatMoney(invoice.gross)) +
+      draftPreviewCard("Lines", invoice.lines.length) +
+    '</div>' +
+    '<div class="table-wrap"><table class="draft-source-line-table"><thead><tr><th>Description</th><th>Service type</th><th>VAT conversion</th><th>Nominal conversion</th><th>Net</th><th>VAT</th><th>Gross</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<div><button class="secondary-button" type="button" data-select-single-draft="' + escapeHtml(invoice.sourceInvoiceId) + '">Select only this invoice and check it</button></div>' +
+  '</article>';
+}
+
+function draftSourceMappingLabel(kind, sourceCode, sourceContext) {
+  if (!sourceCode) {
+    return "-";
+  }
+  const mappings = kind === "tax" ? sageReferences.tax_mappings : sageReferences.ledger_mappings;
+  const saved = mappings.find((mapping) => mapping.source_code === sourceCode && (kind === "tax" || mapping.source_context === sourceContext));
+  return saved ? sourceCode + " -> " + saved.sage_display_name : sourceCode;
 }
 
 function renderReviewTotals() {
@@ -5360,57 +5547,214 @@ function renderReviewSaveNotice(state, message) {
 }
 
 async function previewDraftInvoice(sourceInvoiceId) {
-  const row = reviewRows.find((item) => item.source_invoice_id === sourceInvoiceId);
-  if (!row) {
-    renderDraftNotice("error", "Save the reviewed batch before preparing a draft.");
+  const invoice = readyDraftInvoiceGroups().find((item) => item.sourceInvoiceId === sourceInvoiceId);
+  if (!invoice) {
+    renderDraftNotice("error", "Save the reviewed batch and complete the Sage conversion choices before preparing this draft.");
     return;
   }
 
-  const changedInvoice = activeDraftSourceInvoiceId !== sourceInvoiceId;
-  activeDraftSourceInvoiceId = sourceInvoiceId;
-  activeDraftPreview = null;
-  activeDraftFingerprint = null;
-  draftPreparationState = "ready_for_preview";
-  draftConfirmCheckbox.checked = false;
-  draftCreateButton.disabled = true;
-  if (changedInvoice || !draftDueDate.value) {
-    draftDueDate.value = datePlusDays(row.date, 30);
+  selectedDraftInvoiceIds.clear();
+  selectedDraftInvoiceIds.add(sourceInvoiceId);
+  if (!draftDueDates.has(sourceInvoiceId)) {
+    draftDueDates.set(sourceInvoiceId, datePlusDays(invoice.invoiceDate, 30));
   }
-  draftInvoiceEmpty.hidden = true;
-  draftInvoiceWorkspace.hidden = false;
-  draftDryRunButton.disabled = true;
-  draftDryRunButton.textContent = "Checking...";
-  renderDraftNotice("", "");
-
-  try {
-    const response = await fetch("/api/sage/drafts/dry-run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_invoice_id: sourceInvoiceId, due_date: draftDueDate.value }),
-    });
-    const result = await response.json();
-    if (!response.ok || !result.ok) {
-      draftInvoicePreview.innerHTML = "";
-      renderDraftNotice("error", result.error || "This invoice cannot be prepared as a Sage draft.");
-      return;
-    }
-    activeDraftPreview = result.preview;
-    activeDraftFingerprint = result.preview_fingerprint;
-    draftPreparationState = "preview_valid";
-    renderDraftPreview(result.preview);
-    renderDraftNotice("success", "Draft details checked. Review the totals, then confirm the one-off Sage action.");
-    draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
-  } catch (error) {
-    draftInvoicePreview.innerHTML = "";
-    renderDraftNotice("error", "The draft details could not be checked.");
-    console.error(error);
-  } finally {
-    draftDryRunButton.disabled = false;
-    draftDryRunButton.textContent = "Check draft details";
-  }
+  invalidateDraftBatchPreview("");
+  updateDraftEmptyGuidance();
+  draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  await previewSelectedDraftInvoices();
 }
 
-function renderDraftPreview(preview) {
+function selectedReadyDraftInvoices() {
+  return readyDraftInvoiceGroups().filter((invoice) => selectedDraftInvoiceIds.has(invoice.sourceInvoiceId));
+}
+
+function updateDraftSelectionControls() {
+  const readyInvoices = readyDraftInvoiceGroups();
+  const selectedInvoices = selectedReadyDraftInvoices();
+  const count = selectedInvoices.length;
+  const busy = draftPreparationState === "checking" || draftPreparationState === "creating";
+  const allReadySelected = readyInvoices.length > 0 && readyInvoices.every((invoice) => selectedDraftInvoiceIds.has(invoice.sourceInvoiceId));
+  const previewValid = draftPreparationState === "preview_valid" && activeDraftPreviews.length === count && count > 0;
+
+  draftSelectionCount.textContent = count + " selected";
+  draftSelectAllButton.disabled = busy || allReadySelected;
+  draftClearSelectionButton.disabled = busy || count === 0;
+  draftDryRunButton.disabled = busy || count === 0;
+  draftDryRunButton.textContent = draftPreparationState === "checking"
+    ? "Checking " + count + " draft" + plural(count) + "..."
+    : "Check selected draft details (" + count + ")";
+  draftCreateControls.hidden = !previewValid && draftPreparationState !== "creating";
+  draftConfirmText.textContent = "I confirm " + count + " selected draft" + plural(count) + " should be created in Sage.";
+  draftCreateButton.textContent = draftPreparationState === "creating"
+    ? "Creating drafts..."
+    : "Create " + count + " draft" + plural(count) + " in Sage";
+  draftCreateButton.disabled = !previewValid || !draftConfirmCheckbox.checked || busy;
+}
+
+function invalidateDraftBatchPreview(message) {
+  activeDraftPreviews = [];
+  draftPreparationState = selectedDraftInvoiceIds.size > 0 ? "preview_stale" : "no_invoices_selected";
+  draftConfirmCheckbox.checked = false;
+  draftCreateControls.hidden = true;
+  draftInvoicePreview.innerHTML = "";
+  if (message) {
+    renderDraftNotice("", message);
+  } else {
+    renderDraftNotice("", "");
+  }
+  updateDraftSelectionControls();
+}
+
+async function previewSelectedDraftInvoices() {
+  const invoices = selectedReadyDraftInvoices();
+  if (invoices.length === 0) {
+    renderDraftNotice("error", "Select at least one Sage-ready invoice first.");
+    return;
+  }
+
+  const missingDueDate = invoices.find((invoice) => !draftDueDates.get(invoice.sourceInvoiceId));
+  if (missingDueDate) {
+    renderDraftNotice("error", "Choose a due date for invoice " + missingDueDate.invoiceNumber + ".");
+    return;
+  }
+
+  activeDraftPreviews = [];
+  draftPreparationState = "checking";
+  draftConfirmCheckbox.checked = false;
+  draftInvoicePreview.innerHTML = "";
+  updateDraftSelectionControls();
+  const failures = [];
+
+  for (let index = 0; index < invoices.length; index += 1) {
+    const invoice = invoices[index];
+    renderDraftNotice("", "Checking invoice " + (index + 1) + " of " + invoices.length + ": " + invoice.invoiceNumber + "...");
+    try {
+      const response = await fetch("/api/sage/drafts/dry-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_invoice_id: invoice.sourceInvoiceId,
+          due_date: draftDueDates.get(invoice.sourceInvoiceId),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        failures.push({ invoiceNumber: invoice.invoiceNumber, error: result.error || "This invoice cannot be prepared as a Sage draft." });
+        continue;
+      }
+      activeDraftPreviews.push({
+        sourceInvoiceId: invoice.sourceInvoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        dueDate: draftDueDates.get(invoice.sourceInvoiceId),
+        preview: result.preview,
+        previewFingerprint: result.preview_fingerprint,
+      });
+    } catch (error) {
+      failures.push({ invoiceNumber: invoice.invoiceNumber, error: "The draft details could not be checked." });
+      console.error(error);
+    }
+  }
+
+  renderDraftBatchPreview(activeDraftPreviews, failures);
+  if (failures.length > 0) {
+    draftPreparationState = "failed";
+    renderDraftNotice("error", failures.length + " selected invoice" + plural(failures.length) + " could not be checked. No drafts have been created; fix the listed issue and check the selection again.");
+  } else {
+    draftPreparationState = "preview_valid";
+    renderDraftNotice("success", invoices.length + " draft" + plural(invoices.length) + " checked. Review every converted line and total, then confirm the batch action.");
+  }
+  updateDraftSelectionControls();
+  draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function createSelectedDraftInvoices() {
+  const selectedInvoices = selectedReadyDraftInvoices();
+  if (draftPreparationState !== "preview_valid" || activeDraftPreviews.length !== selectedInvoices.length || !draftConfirmCheckbox.checked) {
+    return;
+  }
+  const count = activeDraftPreviews.length;
+  if (!window.confirm("Create " + count + " separate draft invoice" + plural(count) + " in Sage? They will not be sent, released or published.")) {
+    return;
+  }
+
+  const previewsToCreate = [...activeDraftPreviews];
+  const results = [];
+  draftPreparationState = "creating";
+  updateDraftSelectionControls();
+
+  for (let index = 0; index < previewsToCreate.length; index += 1) {
+    const item = previewsToCreate[index];
+    renderDraftNotice("", "Creating draft " + (index + 1) + " of " + count + ": invoice " + item.invoiceNumber + "...");
+    try {
+      const response = await fetch("/api/sage/drafts/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_invoice_id: item.sourceInvoiceId,
+          due_date: item.dueDate,
+          preview_fingerprint: item.previewFingerprint,
+          confirmed: true,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        results.push({ ok: false, invoiceNumber: item.invoiceNumber, message: result.error || "Sage rejected this draft invoice." });
+      } else {
+        results.push({
+          ok: true,
+          invoiceNumber: item.invoiceNumber,
+          foundExisting: Boolean(result.found_existing),
+          reference: result.sage_invoice_reference || result.sage_invoice_id || item.invoiceNumber,
+        });
+        selectedDraftInvoiceIds.delete(item.sourceInvoiceId);
+      }
+    } catch (error) {
+      results.push({
+        ok: false,
+        invoiceNumber: item.invoiceNumber,
+        uncertain: true,
+        message: "The result could not be confirmed. Check Sage for this invoice before trying it again.",
+      });
+      console.error(error);
+    }
+    renderDraftBatchResults(results, count);
+  }
+
+  const succeeded = results.filter((result) => result.ok).length;
+  const failed = results.length - succeeded;
+  activeDraftPreviews = [];
+  draftConfirmCheckbox.checked = false;
+  draftPreparationState = failed > 0 ? "created_partial" : "created";
+  await refreshSageReadiness();
+  draftInvoiceWorkspace.hidden = false;
+  draftCreateControls.hidden = true;
+  renderDraftBatchResults(results, count);
+  updateDraftSelectionControls();
+  renderDraftNotice(failed > 0 ? "error" : "success",
+    succeeded + " of " + count + " draft" + plural(count) + " completed in Sage" +
+    (failed > 0 ? ". Review the result beside each invoice before checking or retrying the remaining selection." : ". No invoices were sent and no payments were recorded."));
+}
+
+function renderDraftBatchPreview(previews, failures) {
+  const previewHtml = previews.map((item) =>
+    '<article class="draft-preview-item"><h3>Invoice ' + escapeHtml(item.invoiceNumber) + '</h3>' + renderDraftPreviewHtml(item.preview) + '</article>'
+  ).join("");
+  const failureHtml = failures.map((failure) =>
+    '<article class="draft-result-item error"><h3>Invoice ' + escapeHtml(failure.invoiceNumber) + '</h3><p>' + escapeHtml(failure.error) + '</p></article>'
+  ).join("");
+  draftInvoicePreview.innerHTML = previewHtml + failureHtml;
+}
+
+function renderDraftBatchResults(results, total) {
+  draftInvoicePreview.innerHTML = '<h3>Batch results (' + results.length + ' of ' + total + ')</h3>' + results.map((result) => {
+    if (!result.ok) {
+      return '<article class="draft-result-item error"><h3>Invoice ' + escapeHtml(result.invoiceNumber) + '</h3><strong>' + (result.uncertain ? 'Check Sage before retrying' : 'Draft not created') + '</strong><p>' + escapeHtml(result.message) + '</p></article>';
+    }
+    return '<article class="draft-result-item success"><h3>Invoice ' + escapeHtml(result.invoiceNumber) + '</h3><strong>' + (result.foundExisting ? 'Existing Sage invoice found; no duplicate created' : 'Draft created in Sage') + '</strong><p>Reference: ' + escapeHtml(result.reference) + '</p></article>';
+  }).join("");
+}
+
+function renderDraftPreviewHtml(preview) {
   const warnings = preview.warnings && preview.warnings.length > 0
     ? preview.warnings.map((warning) => '<li>' + escapeHtml(warning) + "</li>").join("")
     : "<li>No current warnings.</li>";
@@ -5432,8 +5776,7 @@ function renderDraftPreview(preview) {
         draftPreviewCard("Draft VAT", formatMoney(preview.totals.vat_minor / 100)) +
       "</div>"
     : '<p class="cell-muted">No monthly PDF totals were available to compare for this invoice.</p>';
-  draftInvoicePreview.innerHTML =
-    '<div class="draft-preview-grid">' +
+  return '<div class="draft-preview-grid">' +
       draftPreviewCard("Customer", preview.customer) +
       draftPreviewCard("Invoice reference", preview.invoice_reference) +
       draftPreviewCard("Invoice date", preview.invoice_date) +
@@ -5457,17 +5800,19 @@ function formatMinorMoney(value) {
 }
 
 function resetDraftInvoiceWorkspace() {
-  activeDraftSourceInvoiceId = null;
-  activeDraftPreview = null;
-  activeDraftFingerprint = null;
-  draftPreparationState = "no_invoice_selected";
+  selectedDraftInvoiceIds.clear();
+  draftDueDates.clear();
+  activeDraftPreviews = [];
+  draftPreparationState = "no_invoices_selected";
   draftInvoiceEmpty.hidden = false;
   draftInvoiceWorkspace.hidden = true;
   draftInvoicePreview.innerHTML = "";
   draftInvoiceNotice.className = "notice";
   draftInvoiceNotice.textContent = "";
   draftConfirmCheckbox.checked = false;
+  draftCreateControls.hidden = true;
   draftCreateButton.disabled = true;
+  updateDraftSelectionControls();
 }
 
 function renderDraftNotice(state, message) {

@@ -167,7 +167,7 @@ Money is stored as integer minor units, for example pence, to avoid floating-poi
 
 ## Sage OAuth
 
-The Sage connection is read-only at this stage. It uses Sage Business Cloud Accounting OAuth authorization code flow and the Sage Accounting API to identify the connected business. The app stores encrypted access and refresh tokens in D1 so future read-only Sage API calls can refresh access tokens server-side.
+The Sage connection uses Sage Business Cloud Accounting OAuth authorization code flow and the Sage Accounting API to identify the connected business. It reads reference/contact data and performs only explicitly confirmed writes for placeholder contacts and draft invoices. The app stores encrypted access and refresh tokens in D1 so Sage API calls can refresh access tokens server-side.
 
 Current hard-coded Sage endpoints live in `src/sage.ts`:
 
@@ -175,14 +175,17 @@ Current hard-coded Sage endpoints live in `src/sage.ts`:
 - Token: `https://oauth.accounting.sage.com/token`
 - Accounting API: `https://api.accounting.sage.com/v3.1`
 
-## First Sage Draft Invoice Milestone
+## Sage Draft Invoice Batches
 
-The draft workflow is intentionally narrow:
+The draft workflow remains review-led:
 
 - Save the reviewed batch first. Saved transactions are locked before drafting.
-- Select **Preview draft** for one `ready_for_sage` invoice in Step 5.
-- Check the customer, Removals Manager reference, date, due date, line items, tax/ledger mappings, totals and reconciliation comparison.
-- Confirm the due date and tick the one-off confirmation box before **Create one draft invoice in Sage** is enabled.
+- Step 5 lists every `ready_for_sage` invoice with its customer, dates, source lines, service type, tax/nominal conversions and net/VAT/gross totals.
+- Select any combination, use **Select all ready** or **Clear selection**, and set a separate due date for each invoice.
+- Choose **Check selected draft details** to preview the final Sage customer, line mappings, totals, warnings and reconciliation for every selected invoice.
+- Tick the batch confirmation box before **Create selected drafts in Sage** is enabled.
+
+The browser creates the selected drafts sequentially, up to 25 per batch, using the duplicate-safe single-invoice endpoint. It reports created, existing, rejected and uncertain results beside each invoice, so a partial Sage failure never hides which drafts completed.
 
 The app uses `POST /v3.1/sales_invoices` with the official Sage `sales_invoice` request wrapper. It sends `contact_id`, `date`, `due_date`, `reference`, and `invoice_lines`, each with `description`, `quantity`, `unit_price`, the exact `tax_amount`, `ledger_account_id`, `tax_rate_id`, and Sage's service marker (`eu_goods_services_type_id: "2"`). It does not call any release, send, email or publish endpoint.
 
@@ -200,7 +203,7 @@ The mapping screens are still read-only against Sage. They can fetch and cache s
 
 Confirmed mappings are stored in D1. The app deliberately does not assume that a Removals Manager tax code such as `T1` maps to any particular Sage tax rate, and it does not assume that an old nominal code such as `4010` maps to any particular Sage ledger account.
 
-An invoice is only marked `ready_for_sage` when it is included, not storage, not blocked by unresolved warnings/mismatches, has confirmed contact/tax/ledger mappings, and has not already been imported. The app can create a deliberately confirmed placeholder contact or a single draft invoice; it does not create credit notes or send/release invoices.
+An invoice is only marked `ready_for_sage` when it is included, not storage, not blocked by unresolved warnings/mismatches, has confirmed contact/tax/ledger mappings, and has not already been imported. The app can create deliberately confirmed placeholder contacts and one or more selected draft invoices; it does not create credit notes or send/release invoices.
 
 ## Important MVP Notes
 
@@ -212,4 +215,4 @@ An invoice is only marked `ready_for_sage` when it is included, not storage, not
 - Individual invoice PDFs are validated for type and size but are not parsed yet.
 - Rows marked `needs_review` or `exclude_storage` are not export-eligible by default.
 - The D1 save action stores normalized/reconciled row metadata, warnings and raw CSV row values for debugging, not the uploaded files.
-- This milestone creates placeholder contacts and a single Sage sales invoice draft only. Credit notes, sending/releasing, and batch import remain intentionally out of scope.
+- This milestone creates placeholder contacts and selected Sage sales invoice drafts only. Credit notes, sending/releasing, and automatic unattended import remain intentionally out of scope.
