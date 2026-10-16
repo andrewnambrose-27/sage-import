@@ -201,6 +201,8 @@ Connecting, reconnecting and disconnecting Sage require a separate password held
 
 If the secret is not configured, connection controls fail closed: the current stored Sage connection remains usable for imports, but it cannot be replaced or disconnected through the app.
 
+To switch to a different Sage login, unlock the controls and select **Change Sage account**. This opens instructions and a link to Sage in a new tab: sign out of the current Sage account, sign in with the intended account, then return and select **Continue to connect account**. Sage's browser session is separate from this tool, so reconnecting alone can reuse the current Sage login. If needed, open the import tool in a private/incognito window and connect there. The existing connection is replaced only after successful authorization; the connection is shared by everyone using this tool. Check the connected business name before importing into the new account.
+
 Before creation, the app searches every matching Sage page using the `RM inv no.<number>` reference and explicitly requests the `reference` attribute, then reserves the source invoice in D1 using the unique `sage_imports.source_invoice_id` constraint. A confirmed Sage ID is saved as `created`. A network timeout, server error, or response without an ID is recorded as `uncertain` and is never retried automatically; check Sage first. A Sage validation rejection is recorded as `failed`.
 
 The due date defaults to 30 days after the invoice date for the preview. Confirm or change it to the customer's actual agreed terms before creating the draft.

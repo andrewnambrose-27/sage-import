@@ -62,7 +62,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261016-1";
+const APP_ASSET_VERSION = "20261016-2";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1773,6 +1773,7 @@ function uploadPage(): string {
           <div class="sage-actions">
             <button id="sageConnectionLockButton" type="button">Unlock Sage controls</button>
             <a id="sageConnectLink" class="button-link" href="/api/sage/connect" hidden>Connect Sage</a>
+            <button id="sageChangeAccountButton" class="secondary-button" type="button" aria-expanded="false" aria-controls="sageChangeAccountPanel" hidden>Change Sage account</button>
             <button id="sageDisconnectButton" class="secondary-button" type="button" disabled hidden>Disconnect Sage</button>
           </div>
           <div id="sageConnectionUnlockPanel" class="sage-unlock-panel" hidden>
@@ -1785,6 +1786,22 @@ function uploadPage(): string {
               <button id="sageConnectionUnlockCancelButton" class="secondary-button" type="button">Cancel</button>
             </div>
             <p id="sageConnectionLockMessage" role="status"></p>
+          </div>
+          <div id="sageChangeAccountPanel" class="sage-change-panel" aria-labelledby="sageChangeAccountTitle" hidden>
+            <h3 id="sageChangeAccountTitle" tabindex="-1">Change Sage account</h3>
+            <p>Currently connected to <strong id="sageChangeAccountCurrentBusiness"></strong>.</p>
+            <p>Sage remembers your browser login. Reconnecting can therefore take you straight back to the same account.</p>
+            <ol>
+              <li>Open Sage in a new tab, sign out of your current Sage account, then sign in with the account you want to use.</li>
+              <li>Return here and select <strong>Continue to connect account</strong>. Approve access in Sage, then check the connected business name when you return.</li>
+            </ol>
+            <p>Your existing connection stays active until the new connection succeeds. This changes the Sage connection for everyone using this tool.</p>
+            <div class="sage-unlock-actions">
+              <a class="button-link secondary-button" href="https://app.sbc.sage.com/" target="_blank" rel="noopener noreferrer">Open Sage in new tab</a>
+              <a class="button-link" href="/api/sage/connect">Continue to connect account</a>
+              <button id="sageChangeAccountCancelButton" class="secondary-button" type="button">Cancel</button>
+            </div>
+            <p>If Sage still remembers the old account, open this import tool in a private / incognito window, log in, unlock Sage controls and connect there.</p>
           </div>
           <p class="sage-note">Connection controls use a separate password. Locking them protects reconnecting or disconnecting Sage; confirmed customer and draft actions can continue through the existing connection.</p>
         </section>
@@ -2510,6 +2527,32 @@ h2 {
   color: var(--sage-dark);
   font-size: 0.85rem;
   font-weight: 800;
+}
+
+.sage-change-panel {
+  grid-column: 1 / -1;
+  padding: 16px;
+  border: 1px solid rgba(15, 107, 91, 0.28);
+  border-radius: 8px;
+  background: #f1faf7;
+}
+
+.sage-change-panel h3 {
+  margin: 0 0 10px;
+}
+
+.sage-change-panel p,
+.sage-change-panel ol {
+  margin: 0 0 12px;
+  line-height: 1.55;
+}
+
+.sage-change-panel li + li {
+  margin-top: 8px;
+}
+
+.sage-change-panel .sage-unlock-actions {
+  margin-bottom: 12px;
 }
 
 .sage-unlock-panel input {
@@ -3893,6 +3936,11 @@ const saveBatchButton = document.querySelector("#saveBatchButton");
 const reviewSaveNotice = document.querySelector("#reviewSaveNotice");
 const sageStatusText = document.querySelector("#sageStatusText");
 const sageConnectLink = document.querySelector("#sageConnectLink");
+const sageChangeAccountButton = document.querySelector("#sageChangeAccountButton");
+const sageChangeAccountPanel = document.querySelector("#sageChangeAccountPanel");
+const sageChangeAccountTitle = document.querySelector("#sageChangeAccountTitle");
+const sageChangeAccountCurrentBusiness = document.querySelector("#sageChangeAccountCurrentBusiness");
+const sageChangeAccountCancelButton = document.querySelector("#sageChangeAccountCancelButton");
 const sageDisconnectButton = document.querySelector("#sageDisconnectButton");
 const sageConnectionLockButton = document.querySelector("#sageConnectionLockButton");
 const sageConnectionUnlockPanel = document.querySelector("#sageConnectionUnlockPanel");
@@ -4339,6 +4387,19 @@ sageConnectionPassword.addEventListener("keydown", (event) => {
     event.preventDefault();
     sageConnectionUnlockButton.click();
   }
+});
+
+sageChangeAccountButton.addEventListener("click", () => {
+  if (!sageConnectionUnlocked) return;
+  sageChangeAccountPanel.hidden = !sageChangeAccountPanel.hidden;
+  sageChangeAccountButton.setAttribute("aria-expanded", String(!sageChangeAccountPanel.hidden));
+  if (!sageChangeAccountPanel.hidden) sageChangeAccountTitle.focus();
+});
+
+sageChangeAccountCancelButton.addEventListener("click", () => {
+  sageChangeAccountPanel.hidden = true;
+  sageChangeAccountButton.setAttribute("aria-expanded", "false");
+  sageChangeAccountButton.focus();
 });
 
 sageDisconnectButton.addEventListener("click", async () => {
@@ -6512,7 +6573,7 @@ async function loadSageStatus() {
     if (status.connected) {
       const suffix = status.reauthorization_required ? " Reconnection is required." : "";
       sageStatusText.textContent = "Connected to " + status.business_display_name + "." + suffix + accessSuffix;
-      sageConnectLink.textContent = status.reauthorization_required ? "Reconnect Sage" : "Reconnect Sage";
+      sageConnectLink.textContent = "Reconnect Sage";
       sageDisconnectButton.disabled = !status.connection_unlocked;
       return;
     }
@@ -6536,6 +6597,12 @@ function renderSageConnectionAccess(status) {
   sageConnectionUnlocked = configured && Boolean(status.connection_unlocked);
   sageConnectLink.hidden = !sageConnectionUnlocked;
   sageDisconnectButton.hidden = !sageConnectionUnlocked;
+  sageChangeAccountButton.hidden = !sageConnectionUnlocked || !status.connected;
+  sageChangeAccountCurrentBusiness.textContent = status.business_display_name || "Unknown business";
+  if (sageChangeAccountButton.hidden) {
+    sageChangeAccountPanel.hidden = true;
+    sageChangeAccountButton.setAttribute("aria-expanded", "false");
+  }
   sageConnectionLockButton.disabled = !configured;
   sageConnectionLockButton.textContent = !configured
     ? "Sage lock not configured"
