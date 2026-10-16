@@ -50,7 +50,7 @@ describe("embedded browser application", () => {
     expect(appJs).toContain('document.querySelector("#sageConnectionLockButton")');
     expect(appJs).toContain('fetch("/api/sage/connection-access/unlock"');
     expect(appJs).toContain('fetch("/api/sage/connection-access/lock"');
-    expect(appJs).toContain('"Unlock for 30 minutes"');
+    expect(appJs).toContain('"Unlock for 5 minutes"');
     expect(appJs).toContain("status.connection_lock_configured");
   });
 });

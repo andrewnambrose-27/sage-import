@@ -61,8 +61,8 @@ const SAGE_OAUTH_STATE_COOKIE = "sage_oauth_state";
 const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
-const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 30 * 60;
-const APP_ASSET_VERSION = "20260803-12";
+const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
+const APP_ASSET_VERSION = "20261016-1";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1781,7 +1781,7 @@ function uploadPage(): string {
               <input id="sageConnectionPassword" type="password" autocomplete="current-password">
             </div>
             <div class="sage-unlock-actions">
-              <button id="sageConnectionUnlockButton" type="button">Unlock for 30 minutes</button>
+              <button id="sageConnectionUnlockButton" type="button">Unlock for 5 minutes</button>
               <button id="sageConnectionUnlockCancelButton" class="secondary-button" type="button">Cancel</button>
             </div>
             <p id="sageConnectionLockMessage" role="status"></p>
@@ -4330,7 +4330,7 @@ sageConnectionUnlockButton.addEventListener("click", async () => {
     console.error(error);
   } finally {
     sageConnectionUnlockButton.disabled = false;
-    sageConnectionUnlockButton.textContent = "Unlock for 30 minutes";
+    sageConnectionUnlockButton.textContent = "Unlock for 5 minutes";
   }
 });
 
@@ -6499,7 +6499,7 @@ async function loadSageStatus() {
     const accessSuffix = !status.connection_lock_configured
       ? " The separate Sage connection password is not configured."
       : status.connection_unlocked
-        ? " Connection controls are unlocked for 30 minutes."
+        ? " Connection controls are unlocked for 5 minutes."
         : " Connection controls are locked.";
 
     if (!status.storage_configured) {

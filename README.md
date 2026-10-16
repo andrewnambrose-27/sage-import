@@ -197,7 +197,7 @@ The app uses `POST /v3.1/sales_invoices` with the official Sage `sales_invoice` 
 
 ## Sage Connection Control Lock
 
-Connecting, reconnecting and disconnecting Sage require a separate password held in the Cloudflare Pages secret `SAGE_CONNECTION_ACCESS_PASSWORD`. The unlock is stored in a signed, HTTP-only cookie for 30 minutes and can be locked again immediately from the Sage connection card. It protects connection management only, so review-led customer and draft creation can continue through an existing connection without sharing the connection password.
+Connecting, reconnecting and disconnecting Sage require a separate password held in the Cloudflare Pages secret `SAGE_CONNECTION_ACCESS_PASSWORD`. The unlock is stored in a signed, HTTP-only cookie for 5 minutes and can be locked again immediately from the Sage connection card. It protects connection management only, so review-led customer and draft creation can continue through an existing connection without sharing the connection password.
 
 If the secret is not configured, connection controls fail closed: the current stored Sage connection remains usable for imports, but it cannot be replaced or disconnected through the app.
 
