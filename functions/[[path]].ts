@@ -62,7 +62,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261016-2";
+const APP_ASSET_VERSION = "20261017-1";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1735,6 +1735,10 @@ function uploadPage(): string {
           <h1>Sage Import Checker</h1>
         </div>
         <div class="topbar-actions">
+          <nav class="topbar-nav" aria-label="Main navigation">
+            <a href="#add-files">Import tool</a>
+            <a href="#help-guides">Help / Guides</a>
+          </nav>
           <label class="currency-control" for="currencySelector">
             <span>Display currency</span>
             <select id="currencySelector" aria-describedby="currencyHelp">
@@ -1806,7 +1810,7 @@ function uploadPage(): string {
           <p class="sage-note">Connection controls use a separate password. Locking them protects reconnecting or disconnecting Sage; confirmed customer and draft actions can continue through the existing connection.</p>
         </section>
 
-        <section class="upload-workflow" aria-labelledby="upload-title">
+        <section id="add-files" class="upload-workflow workflow-stage stage-one" aria-labelledby="upload-title" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2></div>
@@ -1917,7 +1921,7 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section class="results-panel" aria-live="polite">
+        <section id="check-import" class="results-panel workflow-stage stage-two" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">2</span><h2>Check the import</h2></div>
@@ -1961,7 +1965,7 @@ function uploadPage(): string {
           <div class="preview-actions"><button id="togglePreviewButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
         </section>
 
-        <section class="results-panel" aria-live="polite">
+        <section id="reconciliation" class="results-panel workflow-stage stage-two" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge substep">2</span><h2>Reconciliation</h2></div>
@@ -1991,7 +1995,7 @@ function uploadPage(): string {
           <div class="preview-actions"><button id="toggleReconciliationButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
         </section>
 
-        <section class="results-panel review-panel" aria-live="polite">
+        <section id="review-transactions" class="results-panel review-panel workflow-stage stage-three" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2></div>
@@ -2067,7 +2071,7 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section class="results-panel mapping-panel" aria-live="polite">
+        <section id="sage-conversion" class="results-panel mapping-panel workflow-stage stage-four" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">4</span><h2>Set up Sage conversion</h2></div>
@@ -2123,7 +2127,7 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section id="draftInvoiceSection" class="results-panel draft-panel" aria-live="polite">
+        <section id="draftInvoiceSection" class="results-panel draft-panel workflow-stage stage-five" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">5</span><h2>Create Sage draft invoices</h2></div>
@@ -2154,9 +2158,77 @@ function uploadPage(): string {
             <p class="cell-muted">Each selected invoice becomes a separate editable draft in Sage. No email is sent and no payment is recorded.</p>
           </div>
         </section>
+
+        <section id="help-guides" class="results-panel help-panel" aria-labelledby="help-title" tabindex="-1">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Help / Guides</p>
+              <h2 id="help-title">Your guide from export to Sage draft</h2>
+              <p>Work through steps 1 to 5, checking warnings and readiness messages as you go. Open a guide below, then use its link to return to that part of the tool.</p>
+            </div>
+            <a class="guide-link" href="#add-files">Back to the import tool &uarr;</a>
+          </div>
+          <div class="guide-list">
+            <details open>
+              <summary>1. Choose and check your export files</summary>
+              <div class="guide-content">
+                <p>Start with the removal invoices CSV from Removals Manager. Add separate deposits, ad hoc invoices or credit notes CSVs where available. Each upload field is optional.</p>
+                <p>Add the monthly invoice report PDF to compare invoice totals and VAT, and help identify customers and services. You can also select multiple individual invoice PDFs. Choose <strong>Check files</strong> when your files are ready.</p>
+                <a href="#add-files">Go to Add files &rarr;</a>
+              </div>
+            </details>
+            <details>
+              <summary>2. Check the import and reconciliation</summary>
+              <div class="guide-content">
+                <p>Check the row counts, candidate value and warnings in the import summary. Look for duplicates and rows that need review before moving on.</p>
+                <p>When a monthly report is provided, reconciliation compares CSV and PDF totals at invoice level. Investigate amount or VAT mismatches against the original records.</p>
+                <div class="guide-links"><a href="#check-import">Go to Check the import &rarr;</a><a href="#reconciliation">Go to Reconciliation &rarr;</a></div>
+              </div>
+            </details>
+            <details>
+              <summary>3. Review transactions and save your batch</summary>
+              <div class="guide-content">
+                <p>Use the filters to find rows that need attention. Check each transaction and choose Include, Exclude or Review. Storage rows stay excluded.</p>
+                <p>Bulk actions apply only to the rows visible under the selected filter. Check the totals, then choose <strong>Save reviewed batch</strong>. Use <strong>Export review CSV</strong> if you need a copy of the review.</p>
+                <a href="#review-transactions">Go to Review transactions &rarr;</a>
+              </div>
+            </details>
+            <details>
+              <summary>4. Set up Sage conversion and match customers</summary>
+              <div class="guide-content">
+                <p>Check the connected Sage business at the top of the tool. Match each source tax code to a Sage VAT rate and each nominal code to a Sage category. Saved conversion choices are reused on future imports.</p>
+                <p>Search for and confirm the correct Sage contact for each customer; suggestions are not accepted automatically. Missing contacts can be created with temporary TEST address details, which you should complete in Sage later.</p>
+                <p>If you have changed VAT settings or categories in Sage, choose <strong>Refresh Sage options</strong> before checking the conversions again.</p>
+                <a href="#sage-conversion">Go to Set up Sage conversion &rarr;</a>
+              </div>
+            </details>
+            <details>
+              <summary>5. Check and create Sage draft invoices</summary>
+              <div class="guide-content">
+                <p>After saving your reviewed batch and resolving readiness issues, select the Sage-ready invoices you want. Choose <strong>Check selected draft details</strong> and review the final details.</p>
+                <p>Tick the confirmation box, then choose <strong>Create selected drafts in Sage</strong>. Each selected invoice becomes a separate editable draft. Drafts are never sent, released or published by this tool.</p>
+                <a href="#draftInvoiceSection">Go to Create Sage draft invoices &rarr;</a>
+              </div>
+            </details>
+            <details>
+              <summary>Common questions and troubleshooting</summary>
+              <div class="guide-content">
+                <h3>Why can I not continue?</h3>
+                <p>Read the message beside the disabled action. Check file warnings, review decisions, saved batch status, VAT and category conversions, and customer matches. Draft creation requires Sage-ready invoices and the final confirmation.</p>
+                <h3>How do I change the Sage account?</h3>
+                <p>Unlock Sage controls with the separate connection password, then choose <strong>Change Sage account</strong> and follow the on-screen steps. Check the connected business name afterwards. Connection changes affect everyone using the tool.</p>
+                <h3>Are my uploaded files saved?</h3>
+                <p>Uploaded CSV and PDF files are not stored permanently. Saving a reviewed batch stores the reviewed records and metadata. Keep your original exports; reloading or leaving this page clears the selected files.</p>
+                <h3>Does changing the display currency convert amounts?</h3>
+                <p>No. The selector changes the currency labels only; it does not apply exchange rates.</p>
+              </div>
+            </details>
+          </div>
+        </section>
       </main>
       <script src="/assets/app.js?v=${APP_ASSET_VERSION}" defer></script>
     `,
+    "dashboard-page",
   );
 }
 
@@ -2168,7 +2240,7 @@ function errorPage(): string {
   return layout("Error", `<main class="message-page"><h1>Something went wrong</h1><p>Please retry the request.</p></main>`);
 }
 
-function layout(title: string, body: string): string {
+function layout(title: string, body: string, bodyClass = ""): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -2177,7 +2249,7 @@ function layout(title: string, body: string): string {
     <title>${escapeHtml(title)} | Sage Import Checker</title>
     <link rel="stylesheet" href="/assets/styles.css?v=${APP_ASSET_VERSION}">
   </head>
-  <body>
+  <body class="${escapeHtml(bodyClass)}">
     ${body}
   </body>
 </html>`;
@@ -2224,6 +2296,15 @@ body {
     var(--canvas);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.dashboard-page {
+  background: linear-gradient(180deg, var(--canvas) 0%, #eaf3ef 40%, #cfe5dc 100%);
+}
+
+:focus-visible {
+  outline: 3px solid var(--sage);
+  outline-offset: 4px;
 }
 
 button,
@@ -2345,6 +2426,9 @@ h2 {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2353,6 +2437,7 @@ h2 {
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(10px);
+  box-shadow: 0 4px 18px rgba(31, 49, 54, 0.06);
 }
 
 .topbar h1 {
@@ -2364,6 +2449,26 @@ h2 {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topbar-nav a {
+  padding: 11px 12px;
+  border-radius: 8px;
+  color: var(--sage-dark);
+  font-size: 0.88rem;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar-nav a:hover {
+  background: #eaf3ef;
 }
 
 .currency-control {
@@ -2418,6 +2523,92 @@ h2 {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: 0 12px 32px rgba(31, 49, 54, 0.08);
+}
+
+.dashboard-shell > section[id] {
+  scroll-margin-top: calc(var(--topbar-height, 120px) + 20px);
+}
+
+.workflow-stage {
+  border-color: rgba(15, 107, 91, var(--stage-edge));
+  background: linear-gradient(155deg, rgba(15, 107, 91, var(--stage-tint)), rgba(15, 107, 91, var(--stage-fade))), var(--panel);
+}
+
+.stage-one { --stage-tint: 0.025; --stage-fade: 0.045; --stage-edge: 0.16; }
+.stage-two { --stage-tint: 0.045; --stage-fade: 0.08; --stage-edge: 0.22; }
+.stage-three { --stage-tint: 0.08; --stage-fade: 0.13; --stage-edge: 0.3; }
+.stage-four { --stage-tint: 0.13; --stage-fade: 0.19; --stage-edge: 0.38; }
+.stage-five { --stage-tint: 0.19; --stage-fade: 0.27; --stage-edge: 0.48; }
+
+.help-panel {
+  margin-top: 36px;
+}
+
+.help-panel .section-heading p:last-child {
+  margin-bottom: 0;
+}
+
+.help-panel a {
+  color: var(--sage-dark);
+  font-weight: 750;
+  text-underline-offset: 3px;
+}
+
+.guide-link {
+  flex-shrink: 0;
+  padding: 10px 0;
+  font-size: 0.88rem;
+}
+
+.guide-list {
+  display: grid;
+  gap: 10px;
+}
+
+.guide-list details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.guide-list summary {
+  padding: 16px;
+  color: var(--sage-dark);
+  cursor: pointer;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.guide-list details[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.guide-content {
+  padding: 16px;
+  line-height: 1.65;
+}
+
+.guide-content p {
+  max-width: 80ch;
+}
+
+.guide-content h3 {
+  margin: 18px 0 6px;
+  font-size: 1rem;
+}
+
+.guide-content h3:first-child {
+  margin-top: 0;
+}
+
+.guide-content p:last-child {
+  margin-bottom: 0;
+}
+
+.guide-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
 }
 
 .hero-panel {
@@ -3807,16 +3998,32 @@ tr.risky-row.high-risk {
   }
 
   .topbar-actions {
-    align-items: stretch;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .topbar {
+    gap: 12px;
+    padding: 14px 18px;
+  }
+
+  .topbar-nav {
+    grid-column: 1 / -1;
   }
 
   .currency-control {
-    grid-template-columns: 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .currency-control select {
+    min-width: 0;
+    width: 100%;
   }
 
   .currency-control small {
-    grid-column: 1;
+    grid-column: 1 / -1;
   }
 
   .topbar-actions form,
@@ -3911,6 +4118,14 @@ tr.risky-row.high-risk {
 `;
 
 export const appJs = String.raw`
+const topbar = document.querySelector(".topbar");
+if (topbar) {
+  const updateTopbarHeight = () => {
+    document.documentElement.style.setProperty("--topbar-height", topbar.getBoundingClientRect().height + "px");
+  };
+  updateTopbarHeight();
+  new ResizeObserver(updateTopbarHeight).observe(topbar);
+}
 const currencySelector = document.querySelector("#currencySelector");
 const uploadForm = document.querySelector("#uploadForm");
 const summaryBody = document.querySelector("#summaryBody");

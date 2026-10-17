@@ -12,6 +12,9 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 - Signed HTTP-only session cookie
 - Logout button
 - Protected dashboard
+- Sticky top bar with in-page import and Help / Guides navigation
+- Progressively greener workflow panels using the existing Sage palette
+- Step-by-step guides and troubleshooting without leaving the current upload
 - Upload fields for Removals Manager CSV exports and PDF reports
 - Browser-only file validation for type and size
 - CSV parsing for removals, deposits, ad hoc invoices and credit notes
