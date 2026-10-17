@@ -17,11 +17,60 @@ describe("Help Centre content and search", () => {
     }
     for (const guide of helpContent.guides) {
       expect(categories).toContain(guide.categoryId);
-      expect(guide.steps.length).toBeGreaterThan(0);
+      expect(guide.steps.length > 0 || Boolean(guide.answer) || Boolean(guide.fileRequirements?.length)).toBe(true);
+      for (const id of guide.relatedGuideIds ?? []) {
+        expect(guides).toContain(id);
+        expect(id).not.toBe(guide.id);
+      }
+      for (const step of guide.steps) {
+        expect(Object.hasOwn(step, "screenshot")).toBe(true);
+        if (step.screenshot) {
+          expect(step.screenshot.src).not.toBe("");
+          expect(step.screenshot.alt.trim()).not.toBe("");
+        }
+      }
       if (guide.toolTarget) {
         expect(["add-files", "check-import", "reconciliation", "review-transactions", "sage-conversion", "draftInvoiceSection"]).toContain(guide.toolTarget);
       }
     }
+  });
+
+  it("keeps export instructions in draft and the customer download explicitly unconfirmed", () => {
+    const exports = helpContent.guides.filter((guide) => guide.categoryId === "removals-manager-exports");
+    expect(exports).toHaveLength(3);
+    for (const guide of exports) {
+      expect(guide.contentStatus).toBe("draft");
+      expect(guide.reviewNote).toBeTruthy();
+      expect(guide.steps).toHaveLength(6);
+    }
+    const customerExport = exports.find((guide) => guide.id === "export-sage-customer-csv")!;
+    expect(customerExport.steps[5].status).toBe("to-be-confirmed");
+    expect(customerExport.steps[5].reviewNote).toContain("not been tested");
+    expect(helpContent.guides.some((guide) => guide.contentStatus === "placeholder")).toBe(false);
+  });
+
+  it("distinguishes invoice requirements from the unsupported customer CSV", () => {
+    const files = helpContent.guides.find((guide) => guide.id === "before-you-start")!.fileRequirements!;
+    expect(files.find((file) => file.id === "sage-invoice-csv")?.status).toBe("required");
+    expect(files.find((file) => file.id === "monthly-invoice-report")?.status).toBe("recommended");
+    expect(files.find((file) => file.id === "sage-customer-csv")?.status).toBe("unsupported");
+    expect(files.find((file) => file.id === "individual-invoice-pdfs")?.note).toContain("not read for invoice data");
+    expect(searchHelpGuides(helpContent, "20 MB").map((guide) => guide.id)).toContain("faq-upload-problem");
+    expect(searchHelpGuides(helpContent, "20 MB").some((guide) => guide.categoryId === "removals-manager-exports")).toBe(false);
+    expect(searchHelpGuides(helpContent, "date-range filter").map((guide) => guide.id)).toContain("faq-reporting-dates");
+  });
+
+  it("includes the ten supplied article titles and seven searchable FAQ answers", () => {
+    const titles = helpContent.guides.map((guide) => guide.title);
+    for (const title of [
+      "How the conversion process works", "Files you'll need", "Export your Monthly Invoice Report (PDF)",
+      "Export your Sage Invoice CSV", "Export your Sage Customer CSV", "Upload and check your files",
+      "Check your import and reconciliation", "Review transactions and save your batch",
+      "Configure Sage and match customers", "Check and create Sage draft invoices",
+    ]) expect(titles).toContain(title);
+    const faqs = helpContent.guides.filter((guide) => guide.answer);
+    expect(faqs).toHaveLength(7);
+    for (const guide of faqs) expect(searchHelpGuides(helpContent, guide.title)).toContain(guide);
   });
 
   it("searches titles, categories, keywords, steps and callouts without changing content", () => {

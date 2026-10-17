@@ -3,15 +3,18 @@ import { helpContent, type HelpContent, type HelpGuide } from "./helpContent";
 // Kept self-contained so the same tested search function can run in the browser.
 export function searchHelpGuides(content: HelpContent, query: string): HelpGuide[] {
   const fold = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const words = fold(query).trim().split(/\s+/).filter(Boolean);
+  const words = fold(query).split(/[^a-z0-9]+/).filter(Boolean);
   return content.guides.filter((guide) => {
     const category = content.categories.find((item) => item.id === guide.categoryId);
     const text = fold([
-      guide.title, guide.summary, ...guide.keywords, category?.title ?? "", category?.description ?? "",
-      ...guide.steps.flatMap((step) => [step.title, step.body, step.callout?.title ?? "", step.callout?.body ?? ""]),
+      guide.title, guide.summary, guide.introduction ?? "", guide.answer ?? "", guide.closingNote ?? "", guide.reviewNote ?? "",
+      guide.exampleFilename ?? "", ...guide.keywords, category?.title ?? "", category?.description ?? "",
+      ...guide.steps.flatMap((step) => [step.title, step.body, ...(step.details ?? []), step.reviewNote ?? "", step.callout?.title ?? "", step.callout?.body ?? ""]),
+      ...(guide.fileRequirements ?? []).flatMap((file) => [file.title, file.status, file.description, file.note]),
       ...(guide.callouts ?? []).flatMap((callout) => [callout.title, callout.body]),
     ].join(" "));
-    return words.every((word) => text.includes(word));
+    const tokens = text.split(/[^a-z0-9]+/).filter(Boolean);
+    return words.every((word) => tokens.some((token) => /^[0-9]+$/.test(word) ? token === word : token.startsWith(word)));
   });
 }
 
@@ -74,7 +77,7 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
   function articleList(guides, showCategory) {
     return '<ul class="help-article-list">' + guides.map((guide) => '<li><button type="button" class="help-article-button" data-help-guide="' + escape(guide.id) + '">' +
       (showCategory ? '<span class="help-article-category">' + escape(categoryFor(guide.categoryId).title) + '</span>' : '') +
-      '<strong>' + escape(guide.title) + '</strong><span>' + escape(guide.summary) + '</span><span class="help-card-arrow" aria-hidden="true">&rarr;</span></button></li>').join("") + '</ul>';
+      '<strong>' + escape(guide.title) + '</strong>' + (guide.contentStatus === "draft" ? '<small class="help-status-badge help-status-draft">Draft guide</small>' : '') + '<span>' + escape(guide.summary) + '</span><span class="help-card-arrow" aria-hidden="true">&rarr;</span></button></li>').join("") + '</ul>';
   }
   function callout(item) {
     const kind = ["note", "tip", "important"].includes(item.type) ? item.type : "note";
@@ -84,6 +87,27 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
     if (!item || !item.alt || !(item.src.startsWith("/") && !item.src.startsWith("//") || item.src.startsWith("https://"))) return "";
     return '<figure class="help-screenshot"><img src="' + escape(item.src) + '" alt="' + escape(item.alt) + '" loading="lazy">' +
       (item.caption ? '<figcaption>' + escape(item.caption) + '</figcaption>' : '') + '</figure>';
+  }
+  function fileRequirements(items) {
+    const labels = { required: "Required for invoice processing", recommended: "Recommended", optional: "Optional", unsupported: "Not supported by this tool" };
+    return '<section class="help-file-requirements" aria-label="File requirements"><ul>' + items.map((file) =>
+      '<li><h4>' + escape(file.title) + '</h4><span class="help-status-badge help-status-' + escape(file.status) + '">' + escape(labels[file.status]) + '</span><p>' + escape(file.description) + '</p><p>' + escape(file.note) + '</p></li>').join("") + '</ul></section>';
+  }
+  function guideSteps(steps) {
+    if (!steps.length) return "";
+    return '<ol class="help-guide-steps" role="list">' + steps.map((step, stepIndex) =>
+      '<li id="help-step-' + escape(step.id) + '"><span class="help-guide-step-number" aria-hidden="true">' + (stepIndex + 1) + '</span><div><h4>' + escape(step.title) + '</h4>' +
+      (step.status === "to-be-confirmed" ? '<span class="help-status-badge help-status-draft">To be confirmed</span>' : '') +
+      (step.reviewNote ? '<p class="help-step-review">' + escape(step.reviewNote) + '</p>' : '') +
+      '<p>' + escape(step.body) + '</p>' + (step.details || []).map((paragraph) => '<p>' + escape(paragraph) + '</p>').join("") +
+      screenshot(step.screenshot) + (step.callout ? callout(step.callout) : '') + '</div></li>').join("") + '</ol>';
+  }
+  function relatedGuides(ids) {
+    const guides = ids.map((id) => content.guides.find((guide) => guide.id === id)).filter(Boolean);
+    if (!guides.length) return "";
+    return '<nav class="help-related-links" aria-label="Related guides"><h4>Related guides</h4><ul>' + guides.map((guide) =>
+      '<li><button type="button" class="help-text-button" data-help-related="' + escape(guide.id) + '">' + escape(guide.title) + '</button>' +
+      (guide.contentStatus === "draft" ? ' <span class="help-status-badge help-status-draft">Draft</span>' : '') + '</li>').join("") + '</ul></nav>';
   }
   function guideView(guide) {
     const category = categoryFor(guide.categoryId);
@@ -97,10 +121,16 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
     const previousNext = (item, label) => item ? '<button type="button" class="help-related-guide" data-help-related="' + escape(item.id) + '"><span>' + label + '</span><strong>' + escape(item.title) + '</strong></button>' : '<span></span>';
     return '<article class="help-guide">' +
       '<p class="help-article-category">' + escape(category.title) + '</p>' + heading(guide.title, guide.summary) +
+      (guide.contentStatus === "draft" ? '<aside class="help-draft-note"><strong>Draft guide — for review</strong><p>' + escape(guide.reviewNote) + '</p></aside>' : '') +
+      (guide.introduction ? '<p class="help-introduction">' + escape(guide.introduction) + '</p>' : '') +
       (guide.contentStatus === "placeholder" ? '<aside class="help-draft-note"><strong>Guide in preparation</strong><p>These are temporary starter notes. Detailed instructions and screenshots will be added next.</p></aside>' : '') +
+      (guide.answer ? '<div class="help-faq-answer"><p>' + escape(guide.answer) + '</p></div>' : '') +
       (guide.callouts || []).map(callout).join("") +
-      '<ol class="help-guide-steps" role="list">' + guide.steps.map((step, stepIndex) => '<li id="help-step-' + escape(step.id) + '"><span class="help-guide-step-number" aria-hidden="true">' + (stepIndex + 1) + '</span><div><h4>' + escape(step.title) + '</h4><p>' + escape(step.body) + '</p>' + screenshot(step.screenshot) + (step.callout ? callout(step.callout) : '') + '</div></li>').join("") + '</ol>' +
+      (guide.fileRequirements ? fileRequirements(guide.fileRequirements) : '') + guideSteps(guide.steps) +
+      (guide.exampleFilename ? '<div class="help-example"><strong>Example filename</strong><code>' + escape(guide.exampleFilename) + '</code></div>' : '') +
+      (guide.closingNote ? '<p class="help-closing-note">' + escape(guide.closingNote) + '</p>' : '') +
       (guide.toolTarget ? '<div class="help-tool-action"><a class="button-link" data-help-tool href="#' + escape(guide.toolTarget) + '">' + escape(guide.toolLabel || "Go to this step in the tool") + ' &rarr;</a><p>Closes Help and returns to your current conversion.</p></div>' : '') +
+      relatedGuides(guide.relatedGuideIds || []) +
       '<nav class="help-guide-pagination" aria-label="More guides in ' + escape(category.title) + '">' + previousNext(siblings[index - 1], "Previous guide") + previousNext(siblings[index + 1], "Next guide") + '</nav>' +
       '<button type="button" class="help-text-button" data-help-category="' + escape(category.id) + '">View all ' + escape(category.title) + ' guides</button></article>';
   }
@@ -267,6 +297,23 @@ export const helpCentreCss = String.raw`
 .help-article-button .help-article-category { margin: 0; }
 .help-draft-note { padding: 14px 16px; margin: 0 0 24px; background: #f4f7f6; border: 1px dashed #9cafaa; border-radius: 8px; font-size: 0.88rem; }
 .help-draft-note p { margin: 5px 0 0; line-height: 1.55; color: var(--muted); }
+.help-introduction, .help-faq-answer, .help-closing-note { line-height: 1.7; }
+.help-introduction { margin-bottom: 24px; }
+.help-status-badge { display: inline-block; width: fit-content; padding: 4px 8px; border: 1px solid #abcfc2; border-radius: 6px; color: var(--sage-dark); background: #edf6f2; font-size: 0.75rem; font-weight: 750; line-height: 1.5; }
+.help-status-draft, .help-status-unsupported { border-color: #e1bc72; background: #fffaf0; color: #764312; }
+.help-status-optional { border-color: var(--line); background: #f4f7f6; color: var(--muted); }
+.help-file-requirements ul { display: grid; gap: 16px; padding: 0; list-style: none; margin: 24px 0; }
+.help-file-requirements li { border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
+.help-file-requirements h4 { margin: 0 0 10px; font-size: 1.05rem; }
+.help-file-requirements p { margin: 12px 0 0; line-height: 1.65; }
+.help-guide-steps .help-step-review { margin-top: 12px; padding: 12px; background: #fffaf0; border-left: 3px solid #a65319; }
+.help-guide-steps .help-status-badge { margin-bottom: 12px; }
+.help-example { display: grid; gap: 8px; margin: 24px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+.help-example code { overflow-wrap: anywhere; line-height: 1.6; font-size: 0.88rem; }
+.help-related-links { margin: 24px 0; line-height: 1.7; }
+.help-related-links h4 { margin: 0 0 12px; font-size: 1rem; }
+.help-related-links ul { display: grid; gap: 12px; margin: 0; padding-left: 20px; }
+.help-related-links button { text-align: left; }
 .help-callout { padding: 16px 18px; margin: 18px 0; border: 1px solid #abcfc2; border-left: 4px solid var(--sage); border-radius: 8px; background: #f4f9f7; }
 .help-callout-important { border-color: #e1bc72; border-left-color: #a65319; background: #fffaf0; }
 .help-callout p { margin: 6px 0 0; line-height: 1.6; }

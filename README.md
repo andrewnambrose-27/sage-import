@@ -33,9 +33,9 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 
 ## Editing the Help Centre
 
-Guide content lives in `src/helpContent.ts`, separately from the UI in `src/helpCentre.ts`. Keep category, guide and step IDs stable when replacing the temporary starter copy. Change `contentStatus` from `placeholder` to `ready` when an article is complete. Array order controls article order and previous/next navigation within each category.
+Guide content lives in `src/helpContent.ts`, separately from the UI in `src/helpCentre.ts`. Keep category, guide and step IDs stable when editing copy. Confirmed tool instructions use `contentStatus: "ready"`; unverified Removals Manager export instructions use `"draft"` with a `reviewNote`. Change a draft to ready only after verifying its workflow. Array order controls article order and previous/next navigation within each category. See `docs/help-content-review.md` for the verification summary and outstanding checks.
 
-Each guide supports a summary, search keywords, numbered steps, optional note/tip/important callouts, and a link back to a named conversion section. Each step can include an optional screenshot with `src`, descriptive `alt` text and a caption. Prefer approved images under `/help/screenshots/`; omit the screenshot field until an image exists. The UI renders guide copy as plain text, not HTML.
+Each guide supports a summary, introduction, FAQ answer, file requirement indicators, related guide IDs, numbered steps, note/tip/important callouts, example filenames, a closing note and a link back to a named conversion section. Steps can include extra paragraphs, a `to-be-confirmed` status with a review note, and an optional screenshot with `src`, descriptive `alt` text and a caption. Prefer approved images under `/help/screenshots/`; keep `screenshot: null` until an image exists. All article copy lives in the data file and is rendered as plain text, not HTML.
 
 Help opens inside the current page, preserving file selections and conversion state. Category browsing, searching and article navigation do not submit forms or call Sage APIs.
 
