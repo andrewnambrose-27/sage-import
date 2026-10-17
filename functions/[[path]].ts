@@ -62,7 +62,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-2";
+const APP_ASSET_VERSION = "20261017-3";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -2675,6 +2675,11 @@ h2 {
   padding: 22px;
 }
 
+.dashboard-shell > .upload-workflow,
+.dashboard-shell > .results-panel {
+  margin-top: 36px;
+}
+
 .upload-actions,
 .preview-actions {
   display: flex;
@@ -3012,7 +3017,7 @@ h2 {
 .step-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
 }
 
 .step-title h2 {
@@ -3021,14 +3026,14 @@ h2 {
 
 .step-badge {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 56px;
+  height: 56px;
   flex: 0 0 auto;
   border-radius: 50%;
   place-items: center;
   background: var(--sage);
   color: #ffffff;
-  font-size: 0.84rem;
+  font-size: 1.68rem;
   font-weight: 850;
 }
 
