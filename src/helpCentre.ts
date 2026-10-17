@@ -1,4 +1,5 @@
 import { helpContent, type HelpContent, type HelpGuide } from "./helpContent";
+import { helpInfoCss } from "./contextualHelp";
 
 // Kept self-contained so the same tested search function can run in the browser.
 export function searchHelpGuides(content: HelpContent, query: string): HelpGuide[] {
@@ -54,6 +55,11 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
   const clearButton = dialog.querySelector("#helpClearSearch");
   const status = dialog.querySelector("#helpSearchStatus");
   const state = { categoryId: null, guideId: null, query: "" };
+  let activeOpener = opener;
+  let returnPosition = { x: 0, y: 0 };
+  let restoreToolPosition = true;
+  let activeTooltip = null;
+  let tooltipHideTimer = 0;
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
   const categoryFor = (id) => content.categories.find((category) => category.id === id);
   const guidesFor = (id) => content.guides.filter((guide) => guide.categoryId === id);
@@ -164,18 +170,91 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
     state.query = "";
     input.value = "";
   }
-  opener.addEventListener("click", () => {
-    dialog.showModal();
+  function hideHelpTooltip() {
+    window.clearTimeout(tooltipHideTimer);
+    if (activeTooltip) activeTooltip.hidden = true;
+    activeTooltip = null;
+  }
+  function showHelpTooltip(button) {
+    const tooltip = document.getElementById(button.getAttribute("aria-describedby"));
+    if (!tooltip) return;
+    window.clearTimeout(tooltipHideTimer);
+    if (activeTooltip === tooltip && !tooltip.hidden) return;
+    hideHelpTooltip();
+    tooltip.hidden = false;
+    const bounds = button.getBoundingClientRect();
+    const size = tooltip.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    const left = Math.max(12, Math.min(bounds.left + bounds.width / 2 - size.width / 2, viewportWidth - size.width - 12));
+    const top = bounds.bottom + size.height + 12 <= window.innerHeight ? bounds.bottom + 8 : Math.max(12, bounds.top - size.height - 8);
+    tooltip.style.left = left + "px";
+    tooltip.style.top = top + "px";
+    activeTooltip = tooltip;
+  }
+  function openHelp(guideId, trigger = opener) {
+    hideHelpTooltip();
+    if (guideId !== undefined) {
+      const guide = content.guides.find((item) => item.id === guideId);
+      state.guideId = guide?.id ?? null;
+      state.categoryId = guide?.categoryId ?? null;
+      resetSearch();
+      render(false);
+      if (guideId && !guide) status.textContent = "This guide is unavailable. Browse the Help Centre to find guidance.";
+    }
+    activeOpener = trigger;
+    returnPosition = { x: window.scrollX, y: window.scrollY };
+    restoreToolPosition = true;
+    if (!dialog.open) dialog.showModal();
     document.body.classList.add("help-open");
     opener.setAttribute("aria-expanded", "true");
+    activeOpener.setAttribute("aria-expanded", "true");
+    body.scrollTop = 0;
     if (!state.categoryId && !state.guideId && !state.query) input.focus({ preventScroll: true });
     else view.querySelector("#helpViewTitle").focus({ preventScroll: true });
-    body.scrollTop = 0;
+  }
+  opener.addEventListener("click", () => openHelp());
+  document.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("button[data-help-open]") : null;
+    if (button && !button.disabled) openHelp(button.dataset.helpOpen, button);
   });
+  document.addEventListener("pointerover", (event) => {
+    const host = event.target instanceof Element ? event.target.closest(".help-info") : null;
+    if (host) {
+      const button = host.querySelector(".help-info-button");
+      if (button) showHelpTooltip(button);
+    }
+  });
+  document.addEventListener("focusin", (event) => {
+    const button = event.target instanceof Element ? event.target.closest(".help-info-button") : null;
+    if (button) window.requestAnimationFrame(() => {
+      if (document.activeElement === button && !dialog.open) showHelpTooltip(button);
+    });
+  });
+  for (const eventName of ["pointerout", "focusout"]) {
+    document.addEventListener(eventName, (event) => {
+      const host = event.target instanceof Element ? event.target.closest(".help-info") : null;
+      if (host && !(event.relatedTarget instanceof Node && host.contains(event.relatedTarget))) {
+        tooltipHideTimer = window.setTimeout(hideHelpTooltip, 120);
+      }
+    });
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && activeTooltip && !dialog.open) {
+      hideHelpTooltip();
+      event.preventDefault();
+    }
+  });
+  window.addEventListener("scroll", hideHelpTooltip, true);
+  window.addEventListener("resize", hideHelpTooltip);
   dialog.querySelector("#helpCloseButton").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => {
     document.body.classList.remove("help-open");
     opener.setAttribute("aria-expanded", "false");
+    activeOpener.setAttribute("aria-expanded", "false");
+    if (restoreToolPosition) {
+      if (activeOpener.isConnected) activeOpener.focus({ preventScroll: true });
+      window.scrollTo(returnPosition.x, returnPosition.y);
+    }
   });
   dialog.addEventListener("keydown", (event) => {
     if (event.key !== "Tab") return;
@@ -216,6 +295,7 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
       if (guideButton.hasAttribute("data-help-related")) resetSearch();
       render();
     } else if (target.closest("a[data-help-tool]")) {
+      restoreToolPosition = false;
       dialog.close();
     } else if (target === dialog) {
       const bounds = dialog.getBoundingClientRect();
@@ -351,4 +431,4 @@ export const helpCentreCss = String.raw`
   .help-guide-steps > li { gap: 10px; }
   .help-guide-pagination > span:empty { display: none; }
 }
-`;
+` + helpInfoCss;

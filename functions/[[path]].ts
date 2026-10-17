@@ -1,5 +1,6 @@
 import { classifyTransactions } from "../src/classification";
 import { helpCentreCss, helpCentreJs, renderHelpCentre } from "../src/helpCentre";
+import { renderContextualHelp } from "../src/contextualHelp";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
@@ -63,7 +64,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-6";
+const APP_ASSET_VERSION = "20261017-7";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1815,7 +1816,7 @@ function uploadPage(): string {
         <section id="add-files" class="upload-workflow" aria-labelledby="upload-title" tabindex="-1">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2></div>
+              <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2>${renderContextualHelp("upload-step")}</div>
               <p>Start with the main removal invoices CSV. Add deposits, ad hoc invoices, credit notes and PDFs where you have them, then check the files before moving on.</p>
             </div>
           </div>
@@ -1823,7 +1824,7 @@ function uploadPage(): string {
           <form id="uploadForm" class="upload-grid">
             <article class="file-card" data-slot="removalInvoices">
               <div>
-                <h3>Removal invoices CSV</h3>
+                <div class="help-info-heading"><h3>Removal invoices CSV</h3>${renderContextualHelp("removal-invoices")}</div>
                 <p>Use the main removals invoice export from Removals Manager.</p>
               </div>
               <div class="file-dropzone">
@@ -1839,7 +1840,7 @@ function uploadPage(): string {
 
             <article class="file-card" data-slot="removalDeposits">
               <div>
-                <h3>Removal deposits CSV</h3>
+                <div class="help-info-heading"><h3>Removal deposits CSV</h3>${renderContextualHelp("removal-deposits")}</div>
                 <p>Use this if deposits are exported separately from invoices.</p>
               </div>
               <div class="file-dropzone">
@@ -1855,7 +1856,7 @@ function uploadPage(): string {
 
             <article class="file-card" data-slot="adHocInvoices">
               <div>
-                <h3>Ad Hoc invoices CSV</h3>
+                <div class="help-info-heading"><h3>Ad Hoc invoices CSV</h3>${renderContextualHelp("ad-hoc-invoices")}</div>
                 <p>Use the ad hoc invoice export if Removals Manager provides one.</p>
               </div>
               <div class="file-dropzone">
@@ -1871,7 +1872,7 @@ function uploadPage(): string {
 
             <article class="file-card" data-slot="creditNotes">
               <div>
-                <h3>Credit notes CSV</h3>
+                <div class="help-info-heading"><h3>Credit notes CSV</h3>${renderContextualHelp("credit-notes")}</div>
                 <p>Add credit notes here if Removals Manager can export them.</p>
               </div>
               <div class="file-dropzone">
@@ -1887,7 +1888,7 @@ function uploadPage(): string {
 
             <article class="file-card" data-slot="monthlyReport">
               <div>
-                <h3>Monthly invoice report PDF</h3>
+                <div class="help-info-heading"><h3>Monthly invoice report PDF</h3>${renderContextualHelp("monthly-report")}</div>
                 <p>Add the monthly invoice report PDF if it is available for checking later.</p>
               </div>
               <div class="file-dropzone">
@@ -1903,7 +1904,7 @@ function uploadPage(): string {
 
             <article class="file-card" data-slot="invoicePdfs">
               <div>
-                <h3>Individual invoice PDFs</h3>
+                <div class="help-info-heading"><h3>Individual invoice PDFs</h3>${renderContextualHelp("individual-invoices")}</div>
                 <p>Add a batch of invoice PDFs if you have them. Multiple files are allowed.</p>
               </div>
               <div class="file-dropzone">
@@ -1926,7 +1927,7 @@ function uploadPage(): string {
         <section id="check-import" class="results-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">2</span><h2>Check the import</h2></div>
+              <div class="step-title"><span class="step-badge">2</span><h2>Check the import</h2>${renderContextualHelp("import-step")}</div>
               <p id="resultsIntro">Choose any files you have, then select Check files.</p>
             </div>
           </div>
@@ -1969,7 +1970,7 @@ function uploadPage(): string {
           <section id="reconciliation" class="reconciliation-section" aria-labelledby="reconciliation-title" tabindex="-1">
             <div class="section-heading">
               <div>
-                <h3 id="reconciliation-title">Reconciliation</h3>
+                <div class="help-info-heading"><h3 id="reconciliation-title">Reconciliation</h3>${renderContextualHelp("reconciliation")}</div>
                 <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
               </div>
             </div>
@@ -2000,7 +2001,7 @@ function uploadPage(): string {
         <section id="review-transactions" class="results-panel review-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2></div>
+              <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2>${renderContextualHelp("review-step")}</div>
               <p id="reviewIntro">This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.</p>
             </div>
           </div>
@@ -2067,7 +2068,7 @@ function uploadPage(): string {
           <div class="review-footer">
             <div id="reviewSaveNotice" class="notice"></div>
             <div class="button-row">
-              <button id="saveBatchButton" type="button" disabled>Save reviewed batch</button>
+              <div class="help-info-action"><button id="saveBatchButton" type="button" disabled>Save reviewed batch</button>${renderContextualHelp("save-batch")}</div>
               <button id="exportReviewButton" class="secondary-button" type="button" disabled>Export review CSV</button>
             </div>
           </div>
@@ -2076,7 +2077,7 @@ function uploadPage(): string {
         <section id="sage-conversion" class="results-panel mapping-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">4</span><h2>Set up Sage conversion</h2></div>
+              <div class="step-title"><span class="step-badge">4</span><h2>Set up Sage conversion</h2>${renderContextualHelp("sage-step")}</div>
               <p id="mappingIntro">Your uploaded files contain Sage 50 tax and nominal codes. Choose the equivalent Sage Accounting options below. These choices will be saved and reused for future imports.</p>
             </div>
             <div class="button-row">
@@ -2113,7 +2114,7 @@ function uploadPage(): string {
             <article>
               <div class="customer-matching-heading">
                 <div>
-                  <h3>Customer matching</h3>
+                  <div class="help-info-heading"><h3>Customer matching</h3>${renderContextualHelp("customer-matching")}</div>
                   <p>Match customers from the uploaded files to existing Sage contacts. Suggested matches are never accepted automatically.</p>
                 </div>
                 <div class="customer-matching-actions">
@@ -2132,7 +2133,7 @@ function uploadPage(): string {
         <section id="draftInvoiceSection" class="results-panel draft-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">5</span><h2>Create Sage draft invoices</h2></div>
+              <div class="step-title"><span class="step-badge">5</span><h2>Create Sage draft invoices</h2>${renderContextualHelp("draft-step")}</div>
               <p>Review every saved, Sage-ready invoice below, select the ones you want, then check and create the selected drafts together. Drafts are never sent, released or published.</p>
             </div>
           </div>
@@ -2153,7 +2154,7 @@ function uploadPage(): string {
             <div id="draftInvoicePreview" class="draft-preview"></div>
             <div id="draftInvoiceNotice" class="notice"></div>
             <div id="draftCreateControls" class="draft-controls draft-create-controls" hidden>
-              <div class="draft-final-step-copy"><span>Final step</span><strong>Create the selected Sage drafts</strong></div>
+              <div class="draft-final-step-copy"><span>Final step</span><div class="help-info-heading"><strong>Create the selected Sage drafts</strong>${renderContextualHelp("draft-action")}</div></div>
               <label class="confirm-control"><input id="draftConfirmCheckbox" type="checkbox"> <span id="draftConfirmText">I confirm the selected drafts should be created in Sage.</span></label>
               <button id="draftCreateButton" type="button" disabled>Create selected drafts in Sage</button>
             </div>

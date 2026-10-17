@@ -39,6 +39,8 @@ Each guide supports a summary, introduction, FAQ answer, file requirement indica
 
 Help opens inside the current page, preserving file selections and conversion state. Category browsing, searching and article navigation do not submit forms or call Sage APIs.
 
+Contextual info buttons are defined in `src/contextualHelp.ts`. `renderHelpInfo(guideId, { tooltip, label, id })` renders a reusable, keyboard-accessible button; `renderContextualHelp(key)` uses the placement registry. Keep placement IDs unique and link to existing guide IDs. Missing or invalid guide IDs fall back to the Help Centre landing page. The existing Help Centre controller handles direct article navigation, tooltips and restoring focus/scroll to the invoking button. No article content is duplicated.
+
 ## Local Setup
 
 1. Install dependencies:
