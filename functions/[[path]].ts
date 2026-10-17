@@ -62,7 +62,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-1";
+const APP_ASSET_VERSION = "20261017-2";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1735,10 +1735,7 @@ function uploadPage(): string {
           <h1>Sage Import Checker</h1>
         </div>
         <div class="topbar-actions">
-          <nav class="topbar-nav" aria-label="Main navigation">
-            <a href="#add-files">Import tool</a>
-            <a href="#help-guides">Help / Guides</a>
-          </nav>
+          <button id="helpGuidesButton" class="help-guides-button" type="button" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Help / Guides</button>
           <label class="currency-control" for="currencySelector">
             <span>Display currency</span>
             <select id="currencySelector" aria-describedby="currencyHelp">
@@ -1810,7 +1807,7 @@ function uploadPage(): string {
           <p class="sage-note">Connection controls use a separate password. Locking them protects reconnecting or disconnecting Sage; confirmed customer and draft actions can continue through the existing connection.</p>
         </section>
 
-        <section id="add-files" class="upload-workflow workflow-stage stage-one" aria-labelledby="upload-title" tabindex="-1">
+        <section id="add-files" class="upload-workflow" aria-labelledby="upload-title" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2></div>
@@ -1921,7 +1918,7 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section id="check-import" class="results-panel workflow-stage stage-two" aria-live="polite" tabindex="-1">
+        <section id="check-import" class="results-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">2</span><h2>Check the import</h2></div>
@@ -1965,7 +1962,7 @@ function uploadPage(): string {
           <div class="preview-actions"><button id="togglePreviewButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
         </section>
 
-        <section id="reconciliation" class="results-panel workflow-stage stage-two" aria-live="polite" tabindex="-1">
+        <section id="reconciliation" class="results-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge substep">2</span><h2>Reconciliation</h2></div>
@@ -1995,7 +1992,7 @@ function uploadPage(): string {
           <div class="preview-actions"><button id="toggleReconciliationButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
         </section>
 
-        <section id="review-transactions" class="results-panel review-panel workflow-stage stage-three" aria-live="polite" tabindex="-1">
+        <section id="review-transactions" class="results-panel review-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2></div>
@@ -2071,7 +2068,7 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section id="sage-conversion" class="results-panel mapping-panel workflow-stage stage-four" aria-live="polite" tabindex="-1">
+        <section id="sage-conversion" class="results-panel mapping-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">4</span><h2>Set up Sage conversion</h2></div>
@@ -2127,7 +2124,7 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section id="draftInvoiceSection" class="results-panel draft-panel workflow-stage stage-five" aria-live="polite" tabindex="-1">
+        <section id="draftInvoiceSection" class="results-panel draft-panel" aria-live="polite" tabindex="-1">
           <div class="section-heading">
             <div>
               <div class="step-title"><span class="step-badge">5</span><h2>Create Sage draft invoices</h2></div>
@@ -2159,15 +2156,18 @@ function uploadPage(): string {
           </div>
         </section>
 
-        <section id="help-guides" class="results-panel help-panel" aria-labelledby="help-title" tabindex="-1">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Help / Guides</p>
-              <h2 id="help-title">Your guide from export to Sage draft</h2>
-              <p>Work through steps 1 to 5, checking warnings and readiness messages as you go. Open a guide below, then use its link to return to that part of the tool.</p>
-            </div>
-            <a class="guide-link" href="#add-files">Back to the import tool &uarr;</a>
+      </main>
+
+      <dialog id="help-guides" class="help-dialog" aria-labelledby="help-title" aria-describedby="help-intro">
+        <div class="help-dialog-header">
+          <div>
+            <p class="eyebrow">Help / Guides</p>
+            <h2 id="help-title">Your guide from export to Sage draft</h2>
           </div>
+          <button id="helpCloseButton" class="secondary-button" type="button" autofocus>Close guides</button>
+        </div>
+        <div class="help-dialog-body">
+          <p id="help-intro">Work through steps 1 to 5, checking warnings and readiness messages as you go. Open a guide below, then use its link to return to that part of the tool.</p>
           <div class="guide-list">
             <details open>
               <summary>1. Choose and check your export files</summary>
@@ -2224,8 +2224,8 @@ function uploadPage(): string {
               </div>
             </details>
           </div>
-        </section>
-      </main>
+        </div>
+      </dialog>
       <script src="/assets/app.js?v=${APP_ASSET_VERSION}" defer></script>
     `,
     "dashboard-page",
@@ -2451,24 +2451,20 @@ h2 {
   gap: 14px;
 }
 
-.topbar-nav {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.topbar-nav a {
-  padding: 11px 12px;
+.help-guides-button {
+  min-height: 50px;
+  padding: 12px 22px;
+  border: 2px solid var(--sage-dark);
   border-radius: 8px;
-  color: var(--sage-dark);
-  font-size: 0.88rem;
-  font-weight: 750;
-  text-decoration: none;
+  background: var(--sage);
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 800;
   white-space: nowrap;
 }
 
-.topbar-nav a:hover {
-  background: #eaf3ef;
+.help-guides-button:hover {
+  background: var(--sage-dark);
 }
 
 .currency-control {
@@ -2529,35 +2525,66 @@ h2 {
   scroll-margin-top: calc(var(--topbar-height, 120px) + 20px);
 }
 
-.workflow-stage {
-  border-color: rgba(15, 107, 91, var(--stage-edge));
-  background: linear-gradient(155deg, rgba(15, 107, 91, var(--stage-tint)), rgba(15, 107, 91, var(--stage-fade))), var(--panel);
+.dashboard-page.help-open {
+  overflow: hidden;
 }
 
-.stage-one { --stage-tint: 0.025; --stage-fade: 0.045; --stage-edge: 0.16; }
-.stage-two { --stage-tint: 0.045; --stage-fade: 0.08; --stage-edge: 0.22; }
-.stage-three { --stage-tint: 0.08; --stage-fade: 0.13; --stage-edge: 0.3; }
-.stage-four { --stage-tint: 0.13; --stage-fade: 0.19; --stage-edge: 0.38; }
-.stage-five { --stage-tint: 0.19; --stage-fade: 0.27; --stage-edge: 0.48; }
-
-.help-panel {
-  margin-top: 36px;
+.help-dialog {
+  width: min(900px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
 }
 
-.help-panel .section-heading p:last-child {
+.help-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.help-dialog::backdrop {
+  background: rgba(10, 74, 66, 0.38);
+  backdrop-filter: blur(3px);
+}
+
+.help-dialog-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.help-dialog-header h2 {
   margin-bottom: 0;
 }
 
-.help-panel a {
+.help-dialog-header button {
+  flex-shrink: 0;
+}
+
+.help-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 24px;
+}
+
+.help-dialog-body > p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.help-dialog a {
   color: var(--sage-dark);
   font-weight: 750;
   text-underline-offset: 3px;
-}
-
-.guide-link {
-  flex-shrink: 0;
-  padding: 10px 0;
-  font-size: 0.88rem;
 }
 
 .guide-list {
@@ -2568,7 +2595,7 @@ h2 {
 .guide-list details {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .guide-list summary {
@@ -2617,9 +2644,6 @@ h2 {
   gap: 24px;
   align-items: center;
   padding: clamp(22px, 4vw, 34px);
-  background:
-    linear-gradient(120deg, rgba(15, 107, 91, 0.12), rgba(220, 239, 245, 0.55)),
-    #ffffff;
 }
 
 .hero-panel h2 {
@@ -2823,7 +2847,7 @@ h2 {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fbfa;
+  background: var(--panel);
   transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -2840,7 +2864,7 @@ h2 {
 
 .file-card.has-file {
   border-color: #268168;
-  background: #f4fbf8;
+  background: var(--panel);
   box-shadow: 0 0 0 2px rgba(38, 129, 104, 0.16), 0 6px 16px rgba(23, 111, 88, 0.1);
 }
 
@@ -2962,7 +2986,7 @@ h2 {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .summary-cards strong {
@@ -3020,7 +3044,7 @@ h2 {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .review-filter-group {
@@ -3132,7 +3156,7 @@ h2 {
   padding: 12px 14px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: #f8fbfa;
+  background: var(--panel);
   color: var(--muted);
   font-weight: 700;
 }
@@ -3234,7 +3258,7 @@ table {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .mapping-grid h3 {
@@ -3280,7 +3304,7 @@ table {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .why-conversion summary {
@@ -3649,7 +3673,7 @@ table {
 .draft-ready-invoice.selected {
   border-color: #75b9aa;
   box-shadow: 0 0 0 2px rgb(117 185 170 / 18%);
-  background: #f4fbf8;
+  background: var(--panel);
 }
 
 .draft-ready-header {
@@ -3738,7 +3762,7 @@ table {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .draft-controls > label:not(.confirm-control) {
@@ -3832,7 +3856,7 @@ table {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #f8fbfa;
+  background: var(--panel);
 }
 
 .draft-preview-item > h3,
@@ -4009,8 +4033,17 @@ tr.risky-row.high-risk {
     padding: 14px 18px;
   }
 
-  .topbar-nav {
+  .help-guides-button {
     grid-column: 1 / -1;
+  }
+
+  .help-dialog-header {
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .help-dialog-body {
+    padding: 18px;
   }
 
   .currency-control {
@@ -4125,6 +4158,32 @@ if (topbar) {
   };
   updateTopbarHeight();
   new ResizeObserver(updateTopbarHeight).observe(topbar);
+}
+const helpGuidesButton = document.querySelector("#helpGuidesButton");
+const helpDialog = document.querySelector("#help-guides");
+const helpCloseButton = document.querySelector("#helpCloseButton");
+if (helpGuidesButton && helpDialog && helpCloseButton) {
+  helpGuidesButton.addEventListener("click", () => {
+    helpDialog.showModal();
+    helpDialog.querySelector(".help-dialog-body").scrollTop = 0;
+    document.body.classList.add("help-open");
+    helpGuidesButton.setAttribute("aria-expanded", "true");
+  });
+  helpCloseButton.addEventListener("click", () => helpDialog.close());
+  helpDialog.addEventListener("close", () => {
+    document.body.classList.remove("help-open");
+    helpGuidesButton.setAttribute("aria-expanded", "false");
+  });
+  helpDialog.addEventListener("click", (event) => {
+    if (event.target.closest('a[href^="#"]')) {
+      helpDialog.close();
+    } else if (event.target === helpDialog) {
+      const bounds = helpDialog.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+        helpDialog.close();
+      }
+    }
+  });
 }
 const currencySelector = document.querySelector("#currencySelector");
 const uploadForm = document.querySelector("#uploadForm");
