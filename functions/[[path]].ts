@@ -2,6 +2,7 @@ import { classifyTransactions } from "../src/classification";
 import { helpCentreCss, helpCentreJs, renderHelpCentre } from "../src/helpCentre";
 import { renderContextualHelp } from "../src/contextualHelp";
 import { deriveWorkflow, renderWorkflowHeader, renderWorkflowProgress, workflowControllerJs, workflowCss, workflowSteps } from "../src/conversionWorkflow";
+import { connectionIndicator, sageConnectionPanelCss, sageConnectionPanelJs } from "../src/sageConnectionPanel";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
@@ -66,7 +67,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-8";
+const APP_ASSET_VERSION = "20261017-9";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1743,42 +1744,13 @@ function uploadPage(): string {
           <h1>Sage Import Checker</h1>
         </div>
         <div class="topbar-actions">
-          <button id="helpGuidesButton" class="help-guides-button" type="button" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Help / Guides</button>
-          <label class="currency-control" for="currencySelector">
-            <span>Display currency</span>
-            <select id="currencySelector" aria-describedby="currencyHelp">
-              <option value="GBP" selected>GBP (£)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="USD">USD ($)</option>
-            </select>
-            <small id="currencyHelp">Labels amounts only; no exchange-rate conversion.</small>
-          </label>
-          <form method="post" action="/logout">
-            <button class="secondary-button" type="submit">Logout</button>
-          </form>
-        </div>
-      </header>
-
-      <main class="dashboard-shell">
-        <section class="hero-panel">
-          <div>
-            <p class="eyebrow">Upload check</p>
-            <h2>Add the export files you have available.</h2>
-            <p>CSV files are parsed in memory, and the monthly report PDF can be used to match customer names, service types, totals and VAT. Nothing is stored permanently.</p>
+          <button id="sageConnectionIndicator" class="sage-connection-indicator" type="button" data-state="checking" popovertarget="sageConnectionPopover" aria-haspopup="dialog" aria-controls="sageConnectionPopover" aria-expanded="false" aria-label="Checking connection. Open Sage connection details and controls."><span class="sage-connection-symbol" aria-hidden="true"></span><span data-sage-connection-label role="status">Checking connection</span></button>
+          <div id="sageConnectionPopover" class="sage-connection-popover" popover="auto" role="dialog" aria-labelledby="sage-title">
+          <div class="sage-popover-heading">
+            <div><p class="eyebrow">Sage connection</p><h2 id="sage-title">Business Cloud Accounting</h2></div>
+            <button class="secondary-button sage-popover-close" type="button" popovertarget="sageConnectionPopover" popovertargetaction="hide" aria-label="Close Sage connection details" autofocus>&times;</button>
           </div>
-          <div class="status-stack" aria-label="Current safeguards">
-            <span>Private login</span>
-            <span>Optional files</span>
-            <span>No file storage</span>
-          </div>
-        </section>
-
-        <section class="sage-card" aria-labelledby="sage-title">
-          <div>
-            <p class="eyebrow">Sage connection</p>
-            <h2 id="sage-title">Business Cloud Accounting</h2>
-            <p id="sageStatusText">Checking Sage connection status...</p>
-          </div>
+          <p id="sageStatusText" role="status">Checking Sage connection status...</p>
           <div class="sage-actions">
             <button id="sageConnectionLockButton" type="button">Unlock Sage controls</button>
             <a id="sageConnectLink" class="button-link" href="/api/sage/connect" hidden>Connect Sage</a>
@@ -1813,8 +1785,24 @@ function uploadPage(): string {
             <p>If Sage still remembers the old account, open this import tool in a private / incognito window, log in, unlock Sage controls and connect there.</p>
           </div>
           <p class="sage-note">Connection controls use a separate password. Locking them protects reconnecting or disconnecting Sage; confirmed customer and draft actions can continue through the existing connection.</p>
-        </section>
+          </div>
+          <button id="helpGuidesButton" class="help-guides-button" type="button" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Help / Guides</button>
+          <label class="currency-control" for="currencySelector">
+            <span>Display currency</span>
+            <select id="currencySelector" aria-describedby="currencyHelp">
+              <option value="GBP" selected>GBP (£)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="USD">USD ($)</option>
+            </select>
+            <small id="currencyHelp">Labels amounts only; no exchange-rate conversion.</small>
+          </label>
+          <form method="post" action="/logout">
+            <button class="secondary-button" type="submit">Logout</button>
+          </form>
+        </div>
+      </header>
 
+      <main class="dashboard-shell">
         ${renderWorkflowProgress()}
         <section id="add-files" class="upload-workflow workflow-card is-active" aria-labelledby="add-files-heading" tabindex="-1">
           ${renderWorkflowHeader(0)}
@@ -3999,9 +3987,9 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 }
-` + helpCentreCss + workflowCss;
+` + helpCentreCss + workflowCss + sageConnectionPanelCss;
 
-export const appJs = "const deriveWorkflow = " + deriveWorkflow.toString() + ";\nconst workflowHasBlockingWarning = " + hasBlockingWarning.toString() + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
+export const appJs = "const connectionIndicator = " + connectionIndicator.toString() + ";\n" + sageConnectionPanelJs + "\nconst deriveWorkflow = " + deriveWorkflow.toString() + ";\nconst workflowHasBlockingWarning = " + hasBlockingWarning.toString() + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
 const topbar = document.querySelector(".topbar");
 if (topbar) {
   const updateTopbarHeight = () => {
@@ -4528,18 +4516,21 @@ sageChangeAccountCancelButton.addEventListener("click", () => {
 sageDisconnectButton.addEventListener("click", async () => {
   sageDisconnectButton.disabled = true;
   sageStatusText.textContent = "Disconnecting Sage...";
+  updateConnectionIndicator();
 
   try {
     const response = await fetch("/api/sage/disconnect", { method: "POST" });
     const result = await response.json();
     if (!response.ok || !result.ok) {
       sageStatusText.textContent = result.error || "Sage could not be disconnected.";
+      updateConnectionIndicator(null, true);
       return;
     }
 
     await loadSageStatus();
   } catch (error) {
     sageStatusText.textContent = "Sage could not be disconnected.";
+    updateConnectionIndicator(null, true);
     console.error(error);
   }
 });
@@ -6738,11 +6729,13 @@ function datePlusDays(value, days) {
 
 async function loadSageStatus() {
   workflowConnected = false;
+  updateConnectionIndicator();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 8_000);
   try {
     const response = await fetch("/api/sage/status", { signal: controller.signal });
     const status = await response.json();
+    updateConnectionIndicator(status, !response.ok);
     workflowConnected = response.ok && Boolean(status.connected) && !status.reauthorization_required;
 
     if (!response.ok) {
@@ -6781,6 +6774,7 @@ async function loadSageStatus() {
     sageStatusText.textContent = error.name === "AbortError"
       ? "Sage connection status is taking too long to load. Refresh the page to try again."
       : "Sage status could not be loaded.";
+    updateConnectionIndicator(null, true);
     sageDisconnectButton.disabled = true;
     console.error(error);
   } finally {
