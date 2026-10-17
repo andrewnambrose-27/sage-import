@@ -1,5 +1,6 @@
 import { helpContent, type HelpContent, type HelpGuide } from "./helpContent";
 import { helpInfoCss } from "./contextualHelp";
+import { browserFunctionSource } from "./browserFunctionSource";
 
 // Kept self-contained so the same tested search function can run in the browser.
 export function searchHelpGuides(content: HelpContent, query: string): HelpGuide[] {
@@ -43,7 +44,7 @@ export function renderHelpCentre(content: HelpContent = helpContent): string {
       </dialog>`;
 }
 
-export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides.toString() + ";\n" + String.raw`
+export const helpCentreJs = "(() => {\nconst searchGuides = " + browserFunctionSource(searchHelpGuides) + ";\n" + String.raw`
   const opener = document.querySelector("#helpGuidesButton");
   const dialog = document.querySelector("#help-guides");
   if (!opener || !dialog) return;

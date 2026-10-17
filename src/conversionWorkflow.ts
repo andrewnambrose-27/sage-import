@@ -196,8 +196,8 @@ export const workflowCss = String.raw`
 .workflow-segment { display: block; height: 5px; border-radius: 8px; background: #dce4e1; }
 .workflow-progress button.is-completed .workflow-segment { background: var(--sage); }
 .workflow-progress button[aria-current] .workflow-segment { outline: 2px solid var(--sage); outline-offset: 3px; }
-.dashboard-shell > .workflow-card { padding: 0; overflow: visible; transition: border-color 180ms, box-shadow 180ms; }
-.dashboard-shell > .workflow-card.is-active { border-color: #5d9d8e; box-shadow: 0 0 0 1px #8bb9ad, 0 12px 28px rgba(12,77,62,.08); }
+.dashboard-shell .workflow-card { padding: 0; overflow: visible; transition: border-color 180ms, box-shadow 180ms; }
+.dashboard-shell .workflow-card.is-active { border-color: #5d9d8e; box-shadow: 0 0 0 1px #8bb9ad, 0 12px 28px rgba(12,77,62,.08); }
 .workflow-heading { display: flex; align-items: center; gap: 4px; padding: 16px 22px 0; }
 .workflow-heading h2 { flex: 1; min-width: 0; margin: 0; }
 .workflow-toggle { display: flex; align-items: center; gap: 14px; width: 100%; background: transparent; color: inherit; border: 0; border-radius: 6px; padding: 6px 0; text-align: left; box-shadow: none; font: inherit; }
@@ -229,6 +229,6 @@ export const workflowCss = String.raw`
   .workflow-content { padding: 0 14px 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .workflow-body, .workflow-body.is-collapsed, .workflow-chevron, .dashboard-shell > .workflow-card { transition: none; }
+  .workflow-body, .workflow-body.is-collapsed, .workflow-chevron, .dashboard-shell .workflow-card { transition: none; }
 }
 `;

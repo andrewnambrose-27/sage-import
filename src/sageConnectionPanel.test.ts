@@ -21,7 +21,8 @@ describe("header Sage connection status", () => {
     expect(html).not.toContain('class="hero-panel"');
     expect(html).not.toContain('class="sage-card"');
     expect(html).not.toContain("Add the export files you have available.");
-    expect(html).toMatch(/<main class="dashboard-shell">\s*<nav class="workflow-progress"/);
+    expect(html).toContain('id="conversionWorkspace" class="connection-gated" inert aria-disabled="true"');
+    expect(html).toMatch(/id="conversionWorkspace"[^>]*>\s*<nav class="workflow-progress"/);
     const header = html.slice(html.indexOf('<header class="topbar">'), html.indexOf("</header>"));
     expect(header).toContain('id="sageConnectionPopover"');
     expect(header).toContain('popover="auto" role="dialog"');

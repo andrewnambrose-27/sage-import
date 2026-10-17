@@ -3,6 +3,7 @@ import { helpCentreCss, helpCentreJs, renderHelpCentre } from "../src/helpCentre
 import { renderContextualHelp } from "../src/contextualHelp";
 import { deriveWorkflow, renderWorkflowHeader, renderWorkflowProgress, workflowControllerJs, workflowCss, workflowSteps } from "../src/conversionWorkflow";
 import { connectionIndicator, sageConnectionPanelCss, sageConnectionPanelJs } from "../src/sageConnectionPanel";
+import { browserFunctionSource } from "../src/browserFunctionSource";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
@@ -67,7 +68,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-9";
+const APP_ASSET_VERSION = "20261017-10";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1752,6 +1753,7 @@ function uploadPage(): string {
           </div>
           <p id="sageStatusText" role="status">Checking Sage connection status...</p>
           <div class="sage-actions">
+            <button id="sageStatusRefreshButton" class="secondary-button" type="button">Check connection</button>
             <button id="sageConnectionLockButton" type="button">Unlock Sage controls</button>
             <a id="sageConnectLink" class="button-link" href="/api/sage/connect" hidden>Connect Sage</a>
             <button id="sageChangeAccountButton" class="secondary-button" type="button" aria-expanded="false" aria-controls="sageChangeAccountPanel" hidden>Change Sage account</button>
@@ -1803,6 +1805,8 @@ function uploadPage(): string {
       </header>
 
       <main class="dashboard-shell">
+        <div id="connectionRequiredNotice" class="connection-required" role="status"><span id="connectionRequiredText">Checking Sage connection. The conversion tool will unlock when Sage is connected.</span><button class="secondary-button" type="button" popovertarget="sageConnectionPopover">Manage Sage connection</button></div>
+        <div id="conversionWorkspace" class="connection-gated" inert aria-disabled="true" aria-describedby="connectionRequiredText">
         ${renderWorkflowProgress()}
         <section id="add-files" class="upload-workflow workflow-card is-active" aria-labelledby="add-files-heading" tabindex="-1">
           ${renderWorkflowHeader(0)}
@@ -2165,6 +2169,7 @@ function uploadPage(): string {
           </div></div></div>
         </section>
 
+        </div>
       </main>
 
       ${renderHelpCentre()}
@@ -2464,7 +2469,7 @@ h2 {
   box-shadow: 0 12px 32px rgba(31, 49, 54, 0.08);
 }
 
-.dashboard-shell > section[id],
+.dashboard-shell .workflow-card,
 .reconciliation-section {
   scroll-margin-top: calc(var(--topbar-height, 120px) + 20px);
 }
@@ -2506,8 +2511,8 @@ h2 {
   padding: 22px;
 }
 
-.dashboard-shell > .upload-workflow,
-.dashboard-shell > .results-panel {
+.dashboard-shell .upload-workflow,
+.dashboard-shell .results-panel {
   margin-top: 36px;
 }
 
@@ -3989,7 +3994,7 @@ tr.risky-row.high-risk {
 }
 ` + helpCentreCss + workflowCss + sageConnectionPanelCss;
 
-export const appJs = "const connectionIndicator = " + connectionIndicator.toString() + ";\n" + sageConnectionPanelJs + "\nconst deriveWorkflow = " + deriveWorkflow.toString() + ";\nconst workflowHasBlockingWarning = " + hasBlockingWarning.toString() + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
+export const appJs = "const connectionIndicator = " + browserFunctionSource(connectionIndicator) + ";\n" + sageConnectionPanelJs + "\nconst deriveWorkflow = " + browserFunctionSource(deriveWorkflow) + ";\nconst workflowHasBlockingWarning = " + browserFunctionSource(hasBlockingWarning) + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
 const topbar = document.querySelector(".topbar");
 if (topbar) {
   const updateTopbarHeight = () => {
@@ -4022,6 +4027,7 @@ const exportReviewButton = document.querySelector("#exportReviewButton");
 const saveBatchButton = document.querySelector("#saveBatchButton");
 const reviewSaveNotice = document.querySelector("#reviewSaveNotice");
 const sageStatusText = document.querySelector("#sageStatusText");
+const sageStatusRefreshButton = document.querySelector("#sageStatusRefreshButton");
 const sageConnectLink = document.querySelector("#sageConnectLink");
 const sageChangeAccountButton = document.querySelector("#sageChangeAccountButton");
 const sageChangeAccountPanel = document.querySelector("#sageChangeAccountPanel");
@@ -4085,6 +4091,8 @@ let reconciliationExpanded = false;
 let customerMappingsExpanded = false;
 let referenceAutoRefreshAttempted = false;
 let sageConnectionUnlocked = false;
+let sageStatusRequestId = 0;
+let sageStatusController = null;
 // UI bookkeeping only; existing source data, persistence and processing stay in their original owners.
 let workflowUploadRevision = 0;
 let workflowCheckedRevision = -1;
@@ -4418,6 +4426,8 @@ draftCreateButton.addEventListener("click", async () => {
   }
   await createSelectedDraftInvoices();
 });
+
+sageStatusRefreshButton.addEventListener("click", loadSageStatus);
 
 sageConnectionLockButton.addEventListener("click", async () => {
   if (!sageConnectionUnlocked) {
@@ -6730,11 +6740,16 @@ function datePlusDays(value, days) {
 async function loadSageStatus() {
   workflowConnected = false;
   updateConnectionIndicator();
+  const requestId = ++sageStatusRequestId;
+  if (sageStatusController) sageStatusController.abort();
   const controller = new AbortController();
+  sageStatusController = controller;
+  sageStatusRefreshButton.disabled = true;
   const timeout = window.setTimeout(() => controller.abort(), 8_000);
   try {
     const response = await fetch("/api/sage/status", { signal: controller.signal });
     const status = await response.json();
+    if (requestId !== sageStatusRequestId) return;
     updateConnectionIndicator(status, !response.ok);
     workflowConnected = response.ok && Boolean(status.connected) && !status.reauthorization_required;
 
@@ -6771,15 +6786,20 @@ async function loadSageStatus() {
     sageConnectLink.textContent = "Connect Sage";
     sageDisconnectButton.disabled = true;
   } catch (error) {
+    if (requestId !== sageStatusRequestId) return;
     sageStatusText.textContent = error.name === "AbortError"
-      ? "Sage connection status is taking too long to load. Refresh the page to try again."
+      ? "Sage connection status is taking too long to load. Select Check connection to try again."
       : "Sage status could not be loaded.";
     updateConnectionIndicator(null, true);
     sageDisconnectButton.disabled = true;
     console.error(error);
   } finally {
     window.clearTimeout(timeout);
-    updateWorkflow();
+    if (requestId === sageStatusRequestId) {
+      sageStatusController = null;
+      sageStatusRefreshButton.disabled = false;
+      updateWorkflow();
+    }
   }
 }
 

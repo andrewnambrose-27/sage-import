@@ -28,3 +28,11 @@ Automatic progression does not steal focus when the user has opened another card
 - Desktop and 390-pixel mobile layouts were visually checked. Mobile overflow, Help touch targets, keyboard Help navigation, reduced motion and browser errors were checked.
 
 Live Sage connection and draft creation were not exercised against a real account. Their existing backend tests remain unchanged and passing.
+
+## Connection availability
+
+The workflow is greyed out and inert until the existing Sage status endpoint confirms a configured, connected account without a reconnection requirement. Checking, disconnected and error states pause all five steps. Connection controls, Help, currency and Logout remain available. A Check connection action retries status checks; requests time out after eight seconds, and superseded responses cannot unlock the tool.
+
+Pausing only changes presentation and interaction. It preserves uploaded File inputs, parsed records, review decisions, mappings and the open step. Keyboard actions and file drops are blocked while paused. Reconnection restores access without a page reload.
+
+The October 17 production startup failure came from Wrangler's name-preserving helper being referenced by serialised browser functions without its surrounding bundle scope. Shared browser function serialisation now supplies that helper privately for the workflow and Help search. A regression test builds the actual Pages Worker with Wrangler and executes its emitted browser functions. All 118 tests pass; browser checks against that production bundle also cover the timeout, retry, error states, input blocking, retained progress and the complete five-step flow with simulated Sage responses.

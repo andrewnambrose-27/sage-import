@@ -15,12 +15,31 @@ export function connectionIndicator(status: SageConnectionDisplayState | null, f
 export const sageConnectionPanelJs = String.raw`
 const sageConnectionIndicator = document.querySelector("#sageConnectionIndicator");
 const sageConnectionPopover = document.querySelector("#sageConnectionPopover");
+const conversionWorkspace = document.querySelector("#conversionWorkspace");
 function updateConnectionIndicator(status = null, failed = false) {
   const display = connectionIndicator(status, failed);
   sageConnectionIndicator.dataset.state = display.state;
   sageConnectionIndicator.querySelector("[data-sage-connection-label]").textContent = display.label;
   sageConnectionIndicator.setAttribute("aria-label", display.label + ". Open Sage connection details and controls.");
+  const connected = display.state === "connected";
+  if (!connected && conversionWorkspace.contains(document.activeElement)) sageConnectionIndicator.focus({ preventScroll: true });
+  conversionWorkspace.inert = !connected;
+  conversionWorkspace.classList.toggle("connection-gated", !connected);
+  conversionWorkspace.setAttribute("aria-disabled", String(!connected));
+  document.querySelector("#connectionRequiredNotice").hidden = connected;
+  document.querySelector("#connectionRequiredText").textContent = display.state === "checking"
+    ? "Checking Sage connection. The conversion tool will unlock when Sage is connected."
+    : "The conversion tool is paused until Sage is connected. Open Sage connection to check or reconnect your account.";
 }
+for (const name of ["click", "input", "change", "submit", "keydown"]) {
+  conversionWorkspace.addEventListener(name, (event) => {
+    if (conversionWorkspace.inert) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }, true);
+}
+// Do not let a dropped file navigate away from the paused tool or reach an upload handler.
+for (const name of ["dragover", "drop"]) document.addEventListener(name, (event) => {
+  if (conversionWorkspace.inert) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
 function positionSageConnectionPopover(opening = false) {
   if (!opening && !sageConnectionPopover.matches(":popover-open")) return;
   const header = document.querySelector(".topbar").getBoundingClientRect();
@@ -44,10 +63,13 @@ sageConnectionPopover.addEventListener("toggle", (event) => {
   if (open) positionSageConnectionPopover();
 });
 window.addEventListener("resize", () => positionSageConnectionPopover());
-// A popover is non-modal: Escape/outside click dismiss it and the rest of the tool stays usable.
+// A popover is non-modal: Escape/outside click dismiss it without changing conversion data.
 `;
 
 export const sageConnectionPanelCss = String.raw`
+.connection-required { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; padding: 12px 16px; border: 1px solid #d6dfda; border-radius: 8px; background: #f3f5f4; color: var(--muted); font-size: .9rem; }
+.connection-required .secondary-button { min-height: 44px; }
+.connection-gated { opacity: .45; filter: grayscale(1); pointer-events: none; }
 .sage-connection-indicator {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
