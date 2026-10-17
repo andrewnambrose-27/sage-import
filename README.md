@@ -14,7 +14,7 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 - Protected dashboard
 - Sticky top bar with a prominent green Help / Guides button
 - White cards over a progressively greener page background using the existing Sage palette
-- Popup step-by-step guides and troubleshooting without leaving the current upload
+- Searchable Help Centre with category cards, article views and guides in a popup
 - Upload fields for Removals Manager CSV exports and PDF reports
 - Browser-only file validation for type and size
 - CSV parsing for removals, deposits, ad hoc invoices and credit notes
@@ -30,6 +30,14 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 - Read-only Sage tax-rate, ledger-account and contact lookup/mapping screens
 - Sage readiness status for reviewed invoices
 - One-at-a-time Sage sales invoice draft preview and creation, with explicit confirmation
+
+## Editing the Help Centre
+
+Guide content lives in `src/helpContent.ts`, separately from the UI in `src/helpCentre.ts`. Keep category, guide and step IDs stable when replacing the temporary starter copy. Change `contentStatus` from `placeholder` to `ready` when an article is complete. Array order controls article order and previous/next navigation within each category.
+
+Each guide supports a summary, search keywords, numbered steps, optional note/tip/important callouts, and a link back to a named conversion section. Each step can include an optional screenshot with `src`, descriptive `alt` text and a caption. Prefer approved images under `/help/screenshots/`; omit the screenshot field until an image exists. The UI renders guide copy as plain text, not HTML.
+
+Help opens inside the current page, preserving file selections and conversion state. Category browsing, searching and article navigation do not submit forms or call Sage APIs.
 
 ## Local Setup
 

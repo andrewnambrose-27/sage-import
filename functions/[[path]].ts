@@ -1,4 +1,5 @@
 import { classifyTransactions } from "../src/classification";
+import { helpCentreCss, helpCentreJs, renderHelpCentre } from "../src/helpCentre";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
@@ -62,7 +63,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-4";
+const APP_ASSET_VERSION = "20261017-5";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -77,6 +78,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       if (url.pathname === "/assets/app.js") {
         return textResponse(appJs, "text/javascript; charset=utf-8");
+      }
+
+      if (url.pathname === "/assets/help.js") {
+        return textResponse(helpCentreJs, "text/javascript; charset=utf-8");
       }
 
       if ((url.pathname === "/live" || url.pathname === "/live.html") && request.method === "GET") {
@@ -2158,74 +2163,8 @@ function uploadPage(): string {
 
       </main>
 
-      <dialog id="help-guides" class="help-dialog" aria-labelledby="help-title" aria-describedby="help-intro">
-        <div class="help-dialog-header">
-          <div>
-            <p class="eyebrow">Help / Guides</p>
-            <h2 id="help-title">Your guide from export to Sage draft</h2>
-          </div>
-          <button id="helpCloseButton" class="secondary-button" type="button" autofocus>Close guides</button>
-        </div>
-        <div class="help-dialog-body">
-          <p id="help-intro">Work through steps 1 to 5, checking warnings and readiness messages as you go. Open a guide below, then use its link to return to that part of the tool.</p>
-          <div class="guide-list">
-            <details open>
-              <summary>1. Choose and check your export files</summary>
-              <div class="guide-content">
-                <p>Start with the removal invoices CSV from Removals Manager. Add separate deposits, ad hoc invoices or credit notes CSVs where available. Each upload field is optional.</p>
-                <p>Add the monthly invoice report PDF to compare invoice totals and VAT, and help identify customers and services. You can also select multiple individual invoice PDFs. Choose <strong>Check files</strong> when your files are ready.</p>
-                <a href="#add-files">Go to Add files &rarr;</a>
-              </div>
-            </details>
-            <details>
-              <summary>2. Check the import and reconciliation</summary>
-              <div class="guide-content">
-                <p>Check the row counts, candidate value and warnings in the import summary. Look for duplicates and rows that need review before moving on.</p>
-                <p>When a monthly report is provided, reconciliation compares CSV and PDF totals at invoice level. Investigate amount or VAT mismatches against the original records.</p>
-                <div class="guide-links"><a href="#check-import">Go to Check the import &rarr;</a><a href="#reconciliation">Go to Reconciliation &rarr;</a></div>
-              </div>
-            </details>
-            <details>
-              <summary>3. Review transactions and save your batch</summary>
-              <div class="guide-content">
-                <p>Use the filters to find rows that need attention. Check each transaction and choose Include, Exclude or Review. Storage rows stay excluded.</p>
-                <p>Bulk actions apply only to the rows visible under the selected filter. Check the totals, then choose <strong>Save reviewed batch</strong>. Use <strong>Export review CSV</strong> if you need a copy of the review.</p>
-                <a href="#review-transactions">Go to Review transactions &rarr;</a>
-              </div>
-            </details>
-            <details>
-              <summary>4. Set up Sage conversion and match customers</summary>
-              <div class="guide-content">
-                <p>Check the connected Sage business at the top of the tool. Match each source tax code to a Sage VAT rate and each nominal code to a Sage category. Saved conversion choices are reused on future imports.</p>
-                <p>Search for and confirm the correct Sage contact for each customer; suggestions are not accepted automatically. Missing contacts can be created with temporary TEST address details, which you should complete in Sage later.</p>
-                <p>If you have changed VAT settings or categories in Sage, choose <strong>Refresh Sage options</strong> before checking the conversions again.</p>
-                <a href="#sage-conversion">Go to Set up Sage conversion &rarr;</a>
-              </div>
-            </details>
-            <details>
-              <summary>5. Check and create Sage draft invoices</summary>
-              <div class="guide-content">
-                <p>After saving your reviewed batch and resolving readiness issues, select the Sage-ready invoices you want. Choose <strong>Check selected draft details</strong> and review the final details.</p>
-                <p>Tick the confirmation box, then choose <strong>Create selected drafts in Sage</strong>. Each selected invoice becomes a separate editable draft. Drafts are never sent, released or published by this tool.</p>
-                <a href="#draftInvoiceSection">Go to Create Sage draft invoices &rarr;</a>
-              </div>
-            </details>
-            <details>
-              <summary>Common questions and troubleshooting</summary>
-              <div class="guide-content">
-                <h3>Why can I not continue?</h3>
-                <p>Read the message beside the disabled action. Check file warnings, review decisions, saved batch status, VAT and category conversions, and customer matches. Draft creation requires Sage-ready invoices and the final confirmation.</p>
-                <h3>How do I change the Sage account?</h3>
-                <p>Unlock Sage controls with the separate connection password, then choose <strong>Change Sage account</strong> and follow the on-screen steps. Check the connected business name afterwards. Connection changes affect everyone using the tool.</p>
-                <h3>Are my uploaded files saved?</h3>
-                <p>Uploaded CSV and PDF files are not stored permanently. Saving a reviewed batch stores the reviewed records and metadata. Keep your original exports; reloading or leaving this page clears the selected files.</p>
-                <h3>Does changing the display currency convert amounts?</h3>
-                <p>No. The selector changes the currency labels only; it does not apply exchange rates.</p>
-              </div>
-            </details>
-          </div>
-        </div>
-      </dialog>
+      ${renderHelpCentre()}
+      <script src="/assets/help.js?v=${APP_ASSET_VERSION}" defer></script>
       <script src="/assets/app.js?v=${APP_ASSET_VERSION}" defer></script>
     `,
     "dashboard-page",
@@ -2524,119 +2463,6 @@ h2 {
 .dashboard-shell > section[id],
 .reconciliation-section {
   scroll-margin-top: calc(var(--topbar-height, 120px) + 20px);
-}
-
-.dashboard-page.help-open {
-  overflow: hidden;
-}
-
-.help-dialog {
-  width: min(900px, calc(100% - 32px));
-  max-height: calc(100dvh - 48px);
-  overflow: hidden;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: var(--shadow);
-}
-
-.help-dialog[open] {
-  display: flex;
-  flex-direction: column;
-}
-
-.help-dialog::backdrop {
-  background: rgba(10, 74, 66, 0.38);
-  backdrop-filter: blur(3px);
-}
-
-.help-dialog-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 24px;
-  border-bottom: 1px solid var(--line);
-}
-
-.help-dialog-header h2 {
-  margin-bottom: 0;
-}
-
-.help-dialog-header button {
-  flex-shrink: 0;
-}
-
-.help-dialog-body {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 24px;
-}
-
-.help-dialog-body > p {
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-.help-dialog a {
-  color: var(--sage-dark);
-  font-weight: 750;
-  text-underline-offset: 3px;
-}
-
-.guide-list {
-  display: grid;
-  gap: 10px;
-}
-
-.guide-list details {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-
-.guide-list summary {
-  padding: 16px;
-  color: var(--sage-dark);
-  cursor: pointer;
-  font-weight: 750;
-  line-height: 1.5;
-}
-
-.guide-list details[open] summary {
-  border-bottom: 1px solid var(--line);
-}
-
-.guide-content {
-  padding: 16px;
-  line-height: 1.65;
-}
-
-.guide-content p {
-  max-width: 80ch;
-}
-
-.guide-content h3 {
-  margin: 18px 0 6px;
-  font-size: 1rem;
-}
-
-.guide-content h3:first-child {
-  margin-top: 0;
-}
-
-.guide-content p:last-child {
-  margin-bottom: 0;
-}
-
-.guide-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 24px;
 }
 
 .hero-panel {
@@ -4055,15 +3881,6 @@ tr.risky-row.high-risk {
     grid-column: 1 / -1;
   }
 
-  .help-dialog-header {
-    flex-direction: column;
-    padding: 18px;
-  }
-
-  .help-dialog-body {
-    padding: 18px;
-  }
-
   .currency-control {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -4166,7 +3983,7 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 }
-`;
+` + helpCentreCss;
 
 export const appJs = String.raw`
 const topbar = document.querySelector(".topbar");
@@ -4176,32 +3993,6 @@ if (topbar) {
   };
   updateTopbarHeight();
   new ResizeObserver(updateTopbarHeight).observe(topbar);
-}
-const helpGuidesButton = document.querySelector("#helpGuidesButton");
-const helpDialog = document.querySelector("#help-guides");
-const helpCloseButton = document.querySelector("#helpCloseButton");
-if (helpGuidesButton && helpDialog && helpCloseButton) {
-  helpGuidesButton.addEventListener("click", () => {
-    helpDialog.showModal();
-    helpDialog.querySelector(".help-dialog-body").scrollTop = 0;
-    document.body.classList.add("help-open");
-    helpGuidesButton.setAttribute("aria-expanded", "true");
-  });
-  helpCloseButton.addEventListener("click", () => helpDialog.close());
-  helpDialog.addEventListener("close", () => {
-    document.body.classList.remove("help-open");
-    helpGuidesButton.setAttribute("aria-expanded", "false");
-  });
-  helpDialog.addEventListener("click", (event) => {
-    if (event.target.closest('a[href^="#"]')) {
-      helpDialog.close();
-    } else if (event.target === helpDialog) {
-      const bounds = helpDialog.getBoundingClientRect();
-      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
-        helpDialog.close();
-      }
-    }
-  });
 }
 const currencySelector = document.querySelector("#currencySelector");
 const uploadForm = document.querySelector("#uploadForm");
