@@ -62,7 +62,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-3";
+const APP_ASSET_VERSION = "20261017-4";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1960,36 +1960,36 @@ function uploadPage(): string {
             </table>
           </div>
           <div class="preview-actions"><button id="togglePreviewButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
-        </section>
 
-        <section id="reconciliation" class="results-panel" aria-live="polite" tabindex="-1">
-          <div class="section-heading">
-            <div>
-              <div class="step-title"><span class="step-badge substep">2</span><h2>Reconciliation</h2></div>
-              <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
+          <section id="reconciliation" class="reconciliation-section" aria-labelledby="reconciliation-title" tabindex="-1">
+            <div class="section-heading">
+              <div>
+                <h3 id="reconciliation-title">Reconciliation</h3>
+                <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
+              </div>
             </div>
-          </div>
-          <div id="reconciliationTableWrap" class="table-wrap reconciliation-table-wrap preview-collapsed">
-            <table class="reconciliation-table">
-              <thead>
-                <tr>
-                  <th>Invoice</th>
-                  <th>Status</th>
-                  <th>Customer</th>
-                  <th>Service</th>
-                  <th>CSV total</th>
-                  <th>PDF total</th>
-                  <th>CSV VAT</th>
-                  <th>PDF VAT</th>
-                  <th>Warnings</th>
-                </tr>
-              </thead>
-              <tbody id="reconciliationBody">
-                <tr><td colspan="9" class="empty-state">No reconciliation run yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="preview-actions"><button id="toggleReconciliationButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
+            <div id="reconciliationTableWrap" class="table-wrap reconciliation-table-wrap preview-collapsed">
+              <table class="reconciliation-table">
+                <thead>
+                  <tr>
+                    <th>Invoice</th>
+                    <th>Status</th>
+                    <th>Customer</th>
+                    <th>Service</th>
+                    <th>CSV total</th>
+                    <th>PDF total</th>
+                    <th>CSV VAT</th>
+                    <th>PDF VAT</th>
+                    <th>Warnings</th>
+                  </tr>
+                </thead>
+                <tbody id="reconciliationBody">
+                  <tr><td colspan="9" class="empty-state">No reconciliation run yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="preview-actions"><button id="toggleReconciliationButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
+          </section>
         </section>
 
         <section id="review-transactions" class="results-panel review-panel" aria-live="polite" tabindex="-1">
@@ -2521,7 +2521,8 @@ h2 {
   box-shadow: 0 12px 32px rgba(31, 49, 54, 0.08);
 }
 
-.dashboard-shell > section[id] {
+.dashboard-shell > section[id],
+.reconciliation-section {
   scroll-margin-top: calc(var(--topbar-height, 120px) + 20px);
 }
 
@@ -3022,24 +3023,36 @@ h2 {
 
 .step-title h2 {
   margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
 }
 
 .step-badge {
   display: grid;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   flex: 0 0 auto;
   border-radius: 50%;
   place-items: center;
   background: var(--sage);
   color: #ffffff;
-  font-size: 1.68rem;
+  font-size: 1.5rem;
   font-weight: 850;
 }
 
-.step-badge.substep {
-  background: #dcefe9;
-  color: var(--sage-dark);
+.reconciliation-section {
+  margin-top: 28px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+.reconciliation-section h3 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+
+.preview-actions:has(> button[hidden]) {
+  display: none;
 }
 
 .review-table-tools {
