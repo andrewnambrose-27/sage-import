@@ -1,6 +1,7 @@
 import { classifyTransactions } from "../src/classification";
 import { helpCentreCss, helpCentreJs, renderHelpCentre } from "../src/helpCentre";
 import { renderContextualHelp } from "../src/contextualHelp";
+import { deriveWorkflow, renderWorkflowHeader, renderWorkflowProgress, workflowControllerJs, workflowCss, workflowSteps } from "../src/conversionWorkflow";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
@@ -42,6 +43,7 @@ import {
   parseSageReferenceItems,
   rankSageContactMatches,
   readinessForInvoice,
+  hasBlockingWarning,
   unnamedCustomerMappingKey,
   type SageReferenceType,
   type ReadinessInput,
@@ -64,7 +66,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-7";
+const APP_ASSET_VERSION = "20261017-8";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1813,10 +1815,12 @@ function uploadPage(): string {
           <p class="sage-note">Connection controls use a separate password. Locking them protects reconnecting or disconnecting Sage; confirmed customer and draft actions can continue through the existing connection.</p>
         </section>
 
-        <section id="add-files" class="upload-workflow" aria-labelledby="upload-title" tabindex="-1">
+        ${renderWorkflowProgress()}
+        <section id="add-files" class="upload-workflow workflow-card is-active" aria-labelledby="add-files-heading" tabindex="-1">
+          ${renderWorkflowHeader(0)}
+          <div id="add-files-body" class="workflow-body"><div class="workflow-body-inner"><div class="workflow-content">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">1</span><h2 id="upload-title">Add files</h2>${renderContextualHelp("upload-step")}</div>
               <p>Start with the main removal invoices CSV. Add deposits, ad hoc invoices, credit notes and PDFs where you have them, then check the files before moving on.</p>
             </div>
           </div>
@@ -1922,12 +1926,15 @@ function uploadPage(): string {
             <button id="checkButton" type="button" aria-live="polite" disabled>Check files</button>
             <button id="clearButton" class="secondary-button" type="button" disabled>Clear files</button>
           </div>
+          <div class="workflow-continue"><button id="viewFileResultsButton" type="button" class="secondary-button" data-workflow-open="1" hidden>View file check results</button></div>
+          </div></div></div>
         </section>
 
-        <section id="check-import" class="results-panel" aria-live="polite" tabindex="-1">
+        <section id="check-import" class="results-panel workflow-card" aria-labelledby="check-import-heading" tabindex="-1">
+          ${renderWorkflowHeader(1)}
+          <div id="check-import-body" class="workflow-body is-collapsed" inert><div class="workflow-body-inner"><div class="workflow-content">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">2</span><h2>Check the import</h2>${renderContextualHelp("import-step")}</div>
               <p id="resultsIntro">Choose any files you have, then select Check files.</p>
             </div>
           </div>
@@ -1996,12 +2003,15 @@ function uploadPage(): string {
             </div>
             <div class="preview-actions"><button id="toggleReconciliationButton" class="secondary-button" type="button" hidden>Show all rows</button></div>
           </section>
+          <div class="workflow-continue"><button id="continueReviewButton" type="button" data-workflow-open="2" disabled>Continue to review transactions</button></div>
+          </div></div></div>
         </section>
 
-        <section id="review-transactions" class="results-panel review-panel" aria-live="polite" tabindex="-1">
+        <section id="review-transactions" class="results-panel review-panel workflow-card" aria-labelledby="review-transactions-heading" tabindex="-1">
+          ${renderWorkflowHeader(2)}
+          <div id="review-transactions-body" class="workflow-body is-collapsed" inert><div class="workflow-body-inner"><div class="workflow-content">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">3</span><h2>Review transactions</h2>${renderContextualHelp("review-step")}</div>
               <p id="reviewIntro">This is a checking stage only. Nothing here is sent to Sage, and the report is for review before any future export.</p>
             </div>
           </div>
@@ -2072,12 +2082,14 @@ function uploadPage(): string {
               <button id="exportReviewButton" class="secondary-button" type="button" disabled>Export review CSV</button>
             </div>
           </div>
+          </div></div></div>
         </section>
 
-        <section id="sage-conversion" class="results-panel mapping-panel" aria-live="polite" tabindex="-1">
+        <section id="sage-conversion" class="results-panel mapping-panel workflow-card" aria-labelledby="sage-conversion-heading" tabindex="-1">
+          ${renderWorkflowHeader(3)}
+          <div id="sage-conversion-body" class="workflow-body is-collapsed" inert><div class="workflow-body-inner"><div class="workflow-content">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">4</span><h2>Set up Sage conversion</h2>${renderContextualHelp("sage-step")}</div>
               <p id="mappingIntro">Your uploaded files contain Sage 50 tax and nominal codes. Choose the equivalent Sage Accounting options below. These choices will be saved and reused for future imports.</p>
             </div>
             <div class="button-row">
@@ -2128,12 +2140,14 @@ function uploadPage(): string {
               </div>
             </article>
           </div>
+          </div></div></div>
         </section>
 
-        <section id="draftInvoiceSection" class="results-panel draft-panel" aria-live="polite" tabindex="-1">
+        <section id="draftInvoiceSection" class="results-panel draft-panel workflow-card" aria-labelledby="draftInvoiceSection-heading" tabindex="-1">
+          ${renderWorkflowHeader(4)}
+          <div id="draftInvoiceSection-body" class="workflow-body is-collapsed" inert><div class="workflow-body-inner"><div class="workflow-content">
           <div class="section-heading">
             <div>
-              <div class="step-title"><span class="step-badge">5</span><h2>Create Sage draft invoices</h2>${renderContextualHelp("draft-step")}</div>
               <p>Review every saved, Sage-ready invoice below, select the ones you want, then check and create the selected drafts together. Drafts are never sent, released or published.</p>
             </div>
           </div>
@@ -2160,6 +2174,7 @@ function uploadPage(): string {
             </div>
             <p class="cell-muted">Each selected invoice becomes a separate editable draft in Sage. No email is sent and no payment is recorded.</p>
           </div>
+          </div></div></div>
         </section>
 
       </main>
@@ -3984,9 +3999,9 @@ tr.risky-row.high-risk {
     grid-template-columns: 1fr;
   }
 }
-` + helpCentreCss;
+` + helpCentreCss + workflowCss;
 
-export const appJs = String.raw`
+export const appJs = "const deriveWorkflow = " + deriveWorkflow.toString() + ";\nconst workflowHasBlockingWarning = " + hasBlockingWarning.toString() + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
 const topbar = document.querySelector(".topbar");
 if (topbar) {
   const updateTopbarHeight = () => {
@@ -4082,6 +4097,18 @@ let reconciliationExpanded = false;
 let customerMappingsExpanded = false;
 let referenceAutoRefreshAttempted = false;
 let sageConnectionUnlocked = false;
+// UI bookkeeping only; existing source data, persistence and processing stay in their original owners.
+let workflowUploadRevision = 0;
+let workflowCheckedRevision = -1;
+let workflowCheckState = "idle";
+let workflowConnected = false;
+let workflowSaving = false;
+let workflowSaveFailed = false;
+let workflowSavedReview = "";
+let workflowRefreshRequired = false;
+let workflowReadinessCurrent = false;
+let workflowReadinessRequest = 0;
+let workflowDraftResult = { succeeded: 0, failed: 0, total: 0 };
 const uploadSlots = [
   {
     id: "removalInvoices",
@@ -4132,6 +4159,8 @@ const uploadSlots = [
     mimeTypes: ["application/pdf"],
   },
 ];
+
+initialiseWorkflow();
 
 currencySelector.value = displayCurrency;
 currencySelector.addEventListener("change", () => {
@@ -4300,7 +4329,7 @@ conversionSetupSummary.addEventListener("click", (event) => {
   if (!button) {
     return;
   }
-  draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  openWorkflowStep(4);
 });
 
 exportReviewButton.addEventListener("click", () => {
@@ -4318,6 +4347,9 @@ saveBatchButton.addEventListener("click", async () => {
 
   saveBatchButton.disabled = true;
   saveBatchButton.textContent = "Saving...";
+  workflowSaving = true;
+  workflowSaveFailed = false;
+  updateWorkflow();
 
   try {
     const response = await fetch("/api/import-batches", {
@@ -4332,6 +4364,7 @@ saveBatchButton.addEventListener("click", async () => {
     const result = await response.json();
 
     if (!response.ok || !result.ok) {
+      workflowSaveFailed = true;
       renderReviewSaveNotice("error", result.error || "The reviewed batch could not be saved.");
       return;
     }
@@ -4344,13 +4377,19 @@ saveBatchButton.addEventListener("click", async () => {
       }
       saveBatchButton.disabled = true;
       saveBatchButton.textContent = "Reviewed batch saved";
+      workflowSavedReview = workflowReviewSignature();
+      workflowRefreshRequired = false;
       renderReviewTable();
       await refreshSageReadiness();
     }
   } catch (error) {
     renderReviewSaveNotice("error", "The reviewed batch could not be saved.");
+    workflowSaveFailed = true;
     console.error(error);
   } finally {
+    workflowSaving = false;
+    updateWorkflow();
+    if (!workflowSaveFailed) advanceWorkflow(2, 3);
     if (!reviewRows.every((row) => row.source_invoice_id)) {
       saveBatchButton.disabled = reviewRows.length === 0;
       saveBatchButton.textContent = "Save reviewed batch";
@@ -4642,6 +4681,7 @@ checkButton.addEventListener("click", async () => {
   checkButton.disabled = true;
   setCheckButtonState("checking");
   let checkOutcome = "idle";
+  const checkingRevision = workflowUploadRevision;
 
   const summaries = uploadSlots.flatMap(validateSlot);
   const selectedItems = summaries.filter((item) => !item.missing);
@@ -4693,11 +4733,16 @@ checkButton.addEventListener("click", async () => {
     console.error(error);
   } finally {
     updateUploadActionState();
+    workflowCheckedRevision = checkingRevision;
+    workflowCheckState = checkOutcome === "success" || checkOutcome === "warning" ? "passed" : "failed";
     setCheckButtonState(checkOutcome);
+    if (workflowStates[1].status === "completed") advanceWorkflow(0, 1);
   }
 });
 
 clearButton.addEventListener("click", () => {
+  workflowUploadRevision += 1;
+  workflowCheckState = "idle";
   uploadForm.reset();
   for (const slot of uploadSlots) {
     setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
@@ -4715,9 +4760,12 @@ clearButton.addEventListener("click", () => {
   clearButton.disabled = true;
   setCheckButtonState("idle");
   updateUploadActionState();
+  openWorkflowStep(0);
 });
 
 function updateFieldMessage(slot) {
+  workflowUploadRevision += 1;
+  workflowCheckState = "idle";
   setCheckButtonState("idle");
   const files = getFiles(slot);
   document.querySelector('[data-slot="' + slot.id + '"]').classList.toggle("has-file", files.length > 0);
@@ -4743,6 +4791,7 @@ function updateUploadActionState() {
 }
 
 function setCheckButtonState(state) {
+  if (state === "checking") workflowCheckState = "checking";
   checkButton.classList.toggle("check-success", state === "success");
   checkButton.classList.toggle("check-warning", state === "warning");
   checkButton.textContent = state === "checking"
@@ -4752,6 +4801,7 @@ function setCheckButtonState(state) {
       : state === "warning"
         ? "Files checked - review needed"
         : "Check files";
+  updateWorkflow();
 }
 
 function updatePreviewToggle(rowCount) {
@@ -4940,6 +4990,10 @@ function renderParsedSummaryRows(rows) {
 }
 
 function initialiseReviewRows(rows, reconciliation) {
+  workflowSaveFailed = false;
+  workflowSavedReview = "";
+  workflowRefreshRequired = false;
+  workflowReadinessCurrent = false;
   const reconciliationByInvoice = new Map(reconciliation.map((entry) => [entry.invoice_number, entry]));
   reviewRows = rows.map((row, index) => {
     const classification = row.classification || "needs_review";
@@ -4979,6 +5033,10 @@ function initialiseReviewRows(rows, reconciliation) {
 }
 
 function resetReviewScreen() {
+  workflowSaveFailed = false;
+  workflowSavedReview = "";
+  workflowRefreshRequired = false;
+  workflowReadinessCurrent = false;
   reviewRows = [];
   activeReviewFilter = "all";
   for (const filterButton of reviewFilters.querySelectorAll("[data-filter]")) {
@@ -5170,6 +5228,7 @@ function draftSourceMappingLabel(kind, sourceCode, sourceContext) {
 }
 
 function renderReviewTotals() {
+  updateWorkflow();
   const included = reviewRows.filter((row) => row.review_decision === "include");
   const includedNet = included.reduce((sum, row) => sum + numericAmount(row.amount), 0);
   const includedVat = included.reduce((sum, row) => sum + numericAmount(row.vat_amount), 0);
@@ -5186,11 +5245,53 @@ function renderReviewTotals() {
   ].map(([label, value]) => "<article><strong>" + escapeHtml(String(value)) + "</strong><span>" + escapeHtml(label) + "</span></article>").join("");
 }
 
+function workflowReviewSignature() {
+  return JSON.stringify(reviewRows.map((row) => [row.review_id, row.source_invoice_id, row.review_decision]));
+}
+
+function workflowSnapshot() {
+  const files = uploadSlots.flatMap((slot) => getFiles(slot).map((file) => ({ file, slot })));
+  const included = reviewRows.filter((row) => row.review_decision === "include");
+  const needsReview = reviewRows.filter((row) => row.review_decision === "review" || (row.review_decision === "include" && workflowHasBlockingWarning(row))).length;
+  const reviewedInvoiceNumbers = new Set(reviewRows.map((row) => row.invoice_number));
+  const orphanChecks = latestReconciliationRows.filter((entry) => entry.status !== "matched" && !reviewedInvoiceNumbers.has(entry.invoice_number)).length;
+  const configured = (row) => {
+    const tax = sageReferences.tax_mappings.find((item) => item.source_code === row.tax_code && item.manually_confirmed);
+    const ledger = sageReferences.ledger_mappings.find((item) => item.source_code === row.nominal_code && item.source_context === row.transaction_type && item.manually_confirmed);
+    const customerName = row.customer_name ? normalizeCustomerNameClient(row.customer_name) : "__unnamed_customer__";
+    const customer = sageReferences.customer_mappings.some((item) => item.normalized_customer_name === customerName && item.manually_confirmed);
+    return tax && referenceIsAvailable(tax, sageReferences.active_tax_rates) && ledger && referenceIsAvailable(ledger, sageReferences.active_ledger_accounts) && customer;
+  };
+  const setupAttention = included.filter((row) => !configured(row) || !["ready_for_sage", "already_imported"].includes(row.sage_readiness)).length;
+  return {
+    fileCount: files.length,
+    invalidFiles: files.filter(({ file, slot }) => validateFile(file, slot).length > 0).length,
+    checkState: workflowCheckState,
+    filesCurrent: workflowCheckedRevision === workflowUploadRevision,
+    rowCount: reviewRows.length,
+    importAttention: needsReview + orphanChecks,
+    reviewAttention: needsReview,
+    batchSaved: reviewRows.length > 0 && reviewRows.every((row) => row.source_invoice_id) && workflowSavedReview === workflowReviewSignature() && !workflowRefreshRequired,
+    saving: workflowSaving,
+    saveFailed: workflowSaveFailed,
+    setupComplete: included.length > 0 && setupAttention === 0,
+    setupAttention,
+    connected: workflowConnected,
+    readinessCurrent: workflowReadinessCurrent,
+    readyInvoices: readyDraftInvoiceGroups().length,
+    draftState: draftPreparationState,
+    draftSucceeded: workflowDraftResult.succeeded,
+    draftFailed: workflowDraftResult.failed,
+    draftTotal: workflowDraftResult.total,
+  };
+}
+
 function renderMappingScreens() {
   renderConversionSetupSummary();
   renderTaxMappings();
   renderLedgerMappings();
   renderCustomerMappings();
+  updateWorkflow();
 }
 
 function renderMappingNotice(state, message) {
@@ -5888,6 +5989,9 @@ async function saveCustomerMapping(normalizedCustomerName) {
 }
 
 async function refreshSageReadiness() {
+  const requestId = ++workflowReadinessRequest;
+  workflowReadinessCurrent = false;
+  updateWorkflow();
   if (reviewRows.length === 0) {
     return null;
   }
@@ -5903,6 +6007,8 @@ async function refreshSageReadiness() {
       return null;
     }
 
+    workflowReadinessCurrent = requestId === workflowReadinessRequest;
+    workflowRefreshRequired = Boolean(result.review_refresh_required);
     const readinessById = new Map(result.readiness.map((item) => [item.review_id, item.status]));
     for (const row of reviewRows) {
       row.sage_readiness = readinessById.get(row.review_id) || "blocked_by_warning";
@@ -5916,6 +6022,7 @@ async function refreshSageReadiness() {
       saveBatchButton.disabled = true;
       saveBatchButton.textContent = "Reviewed batch saved";
     }
+    updateWorkflow();
     return result;
   } catch (error) {
     console.error(error);
@@ -6289,7 +6396,7 @@ async function previewDraftInvoice(sourceInvoiceId) {
   }
   invalidateDraftBatchPreview("");
   updateDraftEmptyGuidance();
-  draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  openWorkflowStep(4);
   await previewSelectedDraftInvoices();
 }
 
@@ -6306,6 +6413,7 @@ function draftPreviewMatchesSelection() {
 }
 
 function updateDraftSelectionControls() {
+  updateWorkflow();
   const readyInvoices = readyDraftInvoiceGroups();
   const selectedInvoices = selectedReadyDraftInvoices();
   const count = selectedInvoices.length;
@@ -6432,7 +6540,7 @@ async function previewSelectedDraftInvoices() {
     renderDraftNotice("success", invoices.length + " draft" + plural(invoices.length) + " checked. Review every converted line and total, then confirm the batch action.");
   }
   updateDraftSelectionControls();
-  draftInvoiceSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (expandedWorkflowStep === 4 && !document.querySelector("#help-guides").open) openWorkflowStep(4, { focus: false });
 }
 
 async function createSelectedDraftInvoices() {
@@ -6515,6 +6623,7 @@ async function createSelectedDraftInvoices() {
 
   const succeeded = results.filter((result) => result.ok).length;
   const failed = results.length - succeeded;
+  workflowDraftResult = { succeeded, failed, total: count };
   activeDraftPreviews = [];
   activeDraftPreviewFailures = [];
   draftConfirmCheckbox.checked = false;
@@ -6595,6 +6704,7 @@ function formatMinorMoney(value) {
 }
 
 function resetDraftInvoiceWorkspace() {
+  workflowDraftResult = { succeeded: 0, failed: 0, total: 0 };
   selectedDraftInvoiceIds.clear();
   draftDueDates.clear();
   activeDraftPreviews = [];
@@ -6627,11 +6737,13 @@ function datePlusDays(value, days) {
 }
 
 async function loadSageStatus() {
+  workflowConnected = false;
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 8_000);
   try {
     const response = await fetch("/api/sage/status", { signal: controller.signal });
     const status = await response.json();
+    workflowConnected = response.ok && Boolean(status.connected) && !status.reauthorization_required;
 
     if (!response.ok) {
       sageStatusText.textContent = status.error || "Sage status could not be loaded.";
@@ -6673,6 +6785,7 @@ async function loadSageStatus() {
     console.error(error);
   } finally {
     window.clearTimeout(timeout);
+    updateWorkflow();
   }
 }
 

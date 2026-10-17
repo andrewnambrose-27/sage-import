@@ -188,7 +188,7 @@ export function activeReferenceEntries(entries: SageReferenceEntry[]): SageRefer
   return entries.filter((entry) => entry.is_active);
 }
 
-function hasBlockingWarning(row: ReadinessInput): boolean {
+export function hasBlockingWarning(row: ReadinessInput): boolean {
   if (row.classification === "amount_mismatch" || row.classification === "vat_mismatch" || row.classification === "possible_duplicate") {
     return true;
   }

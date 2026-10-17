@@ -296,6 +296,13 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + searchHelpGuides
       render();
     } else if (target.closest("a[data-help-tool]")) {
       restoreToolPosition = false;
+      const link = target.closest("a[data-help-tool]");
+      if (document.querySelector(".workflow-card")) {
+        event.preventDefault();
+        dialog.close();
+        document.dispatchEvent(new CustomEvent("workflow:reveal", { detail: { id: link.hash.slice(1) } }));
+        return;
+      }
       dialog.close();
     } else if (target === dialog) {
       const bounds = dialog.getBoundingClientRect();
