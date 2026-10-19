@@ -317,9 +317,13 @@ export const helpCentreJs = "(() => {\nconst searchGuides = " + browserFunctionS
 export const helpCentreCss = String.raw`
 .dashboard-page.help-open { overflow: hidden; }
 .help-dialog {
-  width: min(960px, calc(100% - 32px));
-  height: min(820px, calc(100dvh - 48px));
-  max-height: calc(100dvh - 48px);
+  /* Scale the whole Help Centre together, keeping its viewport limits on screen. */
+  --help-scale: 1.15;
+  zoom: var(--help-scale);
+  width: min(960px, calc((100vw - 32px) / var(--help-scale)));
+  height: min(820px, calc((100dvh - 48px) / var(--help-scale)));
+  max-width: calc((100vw - 32px) / var(--help-scale));
+  max-height: calc((100dvh - 48px) / var(--help-scale));
   overflow: hidden;
   padding: 0;
   border: 1px solid var(--line);
@@ -424,7 +428,7 @@ export const helpCentreCss = String.raw`
 .help-empty h4 { margin: 0 0 8px; font-size: 1rem; }
 .help-empty p { color: var(--muted); }
 @media (max-width: 620px) {
-  .help-dialog { width: calc(100% - 20px); height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); }
+  .help-dialog { width: calc((100vw - 20px) / var(--help-scale)); max-width: calc((100vw - 20px) / var(--help-scale)); height: calc((100dvh - 24px) / var(--help-scale)); max-height: calc((100dvh - 24px) / var(--help-scale)); }
   .help-dialog-header { padding: 16px; gap: 12px; }
   .help-dialog-header h2 { font-size: 1.2rem; }
   .help-dialog-header .eyebrow { font-size: 0.65rem; }
