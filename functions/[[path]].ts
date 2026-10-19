@@ -68,7 +68,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261019-2";
+const APP_ASSET_VERSION = "20261019-3";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1806,7 +1806,7 @@ function uploadPage(): string {
 
       <main class="dashboard-shell">
         <section class="quick-start" aria-labelledby="quick-start-heading">
-          <details open>
+          <details>
           <summary class="quick-start-summary">
             <h2 id="quick-start-heading"><span class="eyebrow">Before you start</span>Quick start — gather your files</h2>
           </summary>
@@ -2406,9 +2406,10 @@ h2 {
   top: 0;
   z-index: 20;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 24px 36px;
   padding: 22px clamp(18px, 4vw, 48px);
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.88);
@@ -2423,8 +2424,9 @@ h2 {
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 20px 28px;
 }
 
 .help-guides-button,
@@ -2493,7 +2495,7 @@ h2 {
   display: grid;
   grid-template-columns: auto minmax(120px, auto);
   align-items: center;
-  gap: 3px 8px;
+  gap: 3px 14px;
   color: var(--ink);
   font-size: 0.8rem;
   font-weight: 800;
@@ -3959,7 +3961,7 @@ tr.risky-row.high-risk {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 10px;
+    gap: 16px 18px;
   }
 
   .topbar {

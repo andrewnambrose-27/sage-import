@@ -99,10 +99,6 @@ export const sageConnectionPanelCss = String.raw`
 .sage-connection-popover .sage-change-panel { margin-top: 16px; padding: 12px; }
 .sage-connection-popover .sage-note { margin: 16px 0 0; }
 .sage-connection-popover .sage-popover-close { width: 44px; min-width: 44px; height: 44px; padding: 0; font-size: 1.4rem; }
-@media (max-width: 1080px) {
-  .topbar { flex-wrap: wrap; }
-  .topbar-actions { flex-wrap: wrap; }
-}
 @media (max-width: 820px) {
   .topbar-actions > .help-guides-button, .topbar-actions > .sage-connection-indicator { grid-column: auto; align-self: stretch; padding-inline: 14px; white-space: normal; }
   .sage-connection-popover { padding: 16px; }
