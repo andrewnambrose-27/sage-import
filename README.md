@@ -13,7 +13,7 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 - Logout button
 - Protected dashboard
 - Sticky top bar with a prominent green Help / Guides button
-- Green quick-start checklist with Removals Manager export reminders and links to the full guides, available before connecting Sage
+- Expandable green quick-start checklist with Removals Manager export reminders and white guide buttons, available before connecting Sage
 - White cards over a progressively greener page background using the existing Sage palette
 - Searchable Help Centre with category cards, article views and guides in a popup
 - Upload fields for Removals Manager CSV exports and PDF reports
