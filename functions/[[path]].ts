@@ -68,7 +68,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261017-10";
+const APP_ASSET_VERSION = "20261019-1";
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -1805,6 +1805,29 @@ function uploadPage(): string {
       </header>
 
       <main class="dashboard-shell">
+        <section class="quick-start" aria-labelledby="quick-start-heading">
+          <p class="eyebrow">Before you start</p>
+          <h2 id="quick-start-heading">Quick start — gather your files</h2>
+          <p>Download your exports from Removals Manager first, using the same reporting period for each file.</p>
+          <ol class="quick-start-files">
+            <li>
+              <h3>Invoice CSV <span>Required for invoice processing</span></h3>
+              <p>Go to <strong>System Maintenance → Sage → File Management → Generate Sage CSV File</strong>. Choose your From and To dates, generate the report and save the CSV. Add your main export to <strong>Removal invoices CSV</strong>.</p>
+              <button type="button" data-help-open="choose-csv-exports" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Invoice CSV export guide (draft) &rarr;</button>
+            </li>
+            <li>
+              <h3>Monthly invoice report PDF <span>Recommended</span></h3>
+              <p>Go to <strong>RM → Invoices → Generate → Invoice Report</strong>. Choose the same dates and select <strong>Print Version</strong>, then use your browser's <strong>Print → Save as PDF</strong>. This helps match customer names and check totals.</p>
+              <button type="button" data-help-open="supporting-pdf-reports" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Monthly PDF export guide (draft) &rarr;</button>
+            </li>
+            <li>
+              <h3>Other invoice exports <span>If applicable</span></h3>
+              <p>Gather any separate <strong>deposit, ad hoc invoice and credit note CSVs</strong> for the same period and add them to the matching upload fields. At least one supported invoice CSV is needed; a Sage Customer CSV cannot be uploaded here.</p>
+              <button type="button" data-help-open="before-you-start" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Full file checklist &rarr;</button>
+            </li>
+          </ol>
+          <p class="quick-start-note">The export paths above follow the draft guides; check the menu names in your version of Removals Manager. Once your files are ready, connect Sage, add the files below and choose <strong>Check files</strong>.</p>
+        </section>
         <div id="connectionRequiredNotice" class="connection-required" role="status"><span id="connectionRequiredText">Checking Sage connection. The conversion tool will unlock when Sage is connected.</span><button class="secondary-button" type="button" popovertarget="sageConnectionPopover">Manage Sage connection</button></div>
         <div id="conversionWorkspace" class="connection-gated" inert aria-disabled="true" aria-describedby="connectionRequiredText">
         ${renderWorkflowProgress()}
@@ -2399,7 +2422,8 @@ h2 {
   gap: 14px;
 }
 
-.help-guides-button {
+.help-guides-button,
+.sage-connection-indicator {
   min-height: 50px;
   padding: 12px 22px;
   border: 2px solid var(--sage-dark);
@@ -2413,6 +2437,47 @@ h2 {
 
 .help-guides-button:hover {
   background: var(--sage-dark);
+}
+
+.quick-start {
+  margin-bottom: 24px;
+  padding: clamp(20px, 3vw, 28px);
+  border: 1px solid var(--sage-dark);
+  border-radius: 8px;
+  background: var(--sage);
+  color: #ffffff;
+}
+
+.quick-start .eyebrow { color: #d5eee5; }
+.quick-start h2 { font-size: 1.4rem; }
+.quick-start p { line-height: 1.6; }
+.quick-start-files {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 24px 0;
+  padding-left: 22px;
+}
+.quick-start-files li { padding-left: 4px; }
+.quick-start-files li::marker { font-weight: 800; }
+.quick-start-files h3 { margin: 0 0 12px; font-size: 1rem; }
+.quick-start-files h3 span { display: block; margin-top: 5px; color: #d5eee5; font-size: .78rem; font-weight: 600; }
+.quick-start-files button {
+  min-height: 44px;
+  padding: 8px 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #ffffff;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.quick-start-files button:hover { color: #d5eee5; }
+.quick-start :focus-visible { outline-color: #ffffff; }
+.quick-start .quick-start-note { margin-bottom: 0; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, .3); font-size: .85rem; }
+
+@media (max-width: 820px) {
+  .quick-start-files { grid-template-columns: 1fr; gap: 20px; }
 }
 
 .currency-control {

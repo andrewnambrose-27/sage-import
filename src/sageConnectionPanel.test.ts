@@ -12,7 +12,7 @@ describe("header Sage connection status", () => {
     expect(connectionIndicator(null, true)).toEqual({ state: "error", label: "Connection error" });
   });
 
-  it("starts main content at the workflow and retains the protected controls inside the header", async () => {
+  it("shows quick-start help before the gated workflow and retains protected controls inside the header", async () => {
     const env = { APP_ACCESS_PASSWORD: "test-page-layout-only" };
     const login = await onRequest({ request: new Request("https://example.test/login", { method: "POST", body: new URLSearchParams({ password: env.APP_ACCESS_PASSWORD }) }), env } as Parameters<typeof onRequest>[0]);
     const response = await onRequest({ request: new Request("https://example.test/upload", { headers: { cookie: login.headers.get("set-cookie")!.split(";")[0] } }), env } as Parameters<typeof onRequest>[0]);
@@ -21,6 +21,12 @@ describe("header Sage connection status", () => {
     expect(html).not.toContain('class="hero-panel"');
     expect(html).not.toContain('class="sage-card"');
     expect(html).not.toContain("Add the export files you have available.");
+    const quickStart = html.slice(html.indexOf('<section class="quick-start"'), html.indexOf('id="connectionRequiredNotice"'));
+    expect(quickStart).toContain("Quick start — gather your files");
+    expect(quickStart).toContain('data-help-open="choose-csv-exports"');
+    expect(quickStart).toContain('data-help-open="supporting-pdf-reports"');
+    expect(quickStart).toContain('data-help-open="before-you-start"');
+    expect(quickStart).not.toContain('id="conversionWorkspace"');
     expect(html).toContain('id="conversionWorkspace" class="connection-gated" inert aria-disabled="true"');
     expect(html).toMatch(/id="conversionWorkspace"[^>]*>\s*<nav class="workflow-progress"/);
     const header = html.slice(html.indexOf('<header class="topbar">'), html.indexOf("</header>"));

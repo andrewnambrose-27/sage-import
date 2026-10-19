@@ -72,8 +72,8 @@ export const sageConnectionPanelCss = String.raw`
 .connection-gated { opacity: .45; filter: grayscale(1); pointer-events: none; }
 .sage-connection-indicator {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
-  background: #fff; color: var(--muted); font-size: .85rem; font-weight: 700;
+  border-color: var(--line);
+  background: #fff; color: var(--muted);
 }
 .sage-connection-indicator:hover { background: #f3f8f5; color: var(--sage-dark); }
 .sage-connection-indicator[data-state="connected"] { color: var(--sage-dark); }
@@ -104,8 +104,7 @@ export const sageConnectionPanelCss = String.raw`
   .topbar-actions { flex-wrap: wrap; }
 }
 @media (max-width: 820px) {
-  .topbar-actions > .help-guides-button { grid-column: auto; padding-inline: 14px; }
-  .sage-connection-indicator { height: 100%; }
+  .topbar-actions > .help-guides-button, .topbar-actions > .sage-connection-indicator { grid-column: auto; align-self: stretch; padding-inline: 14px; white-space: normal; }
   .sage-connection-popover { padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .sage-connection-symbol { animation: none !important; } }
