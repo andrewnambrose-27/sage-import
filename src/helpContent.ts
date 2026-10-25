@@ -165,7 +165,7 @@ export const helpContent: HelpContent = {
         {
           "type": "note",
           "title": "No individual upload field is mandatory",
-          "body": "Check files needs at least one selected file. At least one supported invoice CSV is required to produce invoice rows. PDFs on their own only receive basic file checks. Reconciliation needs both a supported invoice CSV and the Monthly invoice report PDF."
+          "body": "Check files can read a customer list or pasted monthly report on its own. At least one supported invoice CSV is required to produce invoice rows. Reconciliation needs an invoice CSV and a pasted monthly report or its PDF."
         }
       ],
       "fileRequirements": [
@@ -185,10 +185,10 @@ export const helpContent: HelpContent = {
         },
         {
           "id": "sage-customer-csv",
-          "title": "Sage Customer CSV",
-          "status": "unsupported",
-          "description": "This separate export is intended to contain customer information, including addresses. Its exact contents have not yet been checked.",
-          "note": "This version has no Sage Customer CSV upload and does not use it to create or match customer records or fill addresses. Do not put it in an invoice CSV field. It may be kept as a separate reference if useful; it is not needed for processing invoices."
+          "title": "Customer List CSV",
+          "status": "optional",
+          "description": "Customer list CSV with JobID, Customer, Tel, Mobile, Email and Address.",
+          "note": "Use Customer List Upload to read and search the full customer list. Customer records are reference data and do not create invoice rows or Sage contacts."
         },
         {
           "id": "other-invoice-csvs",
@@ -196,13 +196,6 @@ export const helpContent: HelpContent = {
           "status": "optional",
           "description": "Depending on your work, you may also have separate deposits, ad-hoc invoices or credit notes to include.",
           "note": "Use Removal deposits CSV, Ad Hoc invoices CSV and Credit notes CSV for the corresponding exports. Each field accepts one CSV. These files can be checked and reviewed; the tool does not create Sage credit notes."
-        },
-        {
-          "id": "individual-invoice-pdfs",
-          "title": "Individual invoice PDFs",
-          "status": "optional",
-          "description": "You can select more than one individual invoice PDF in the Individual invoice PDFs field.",
-          "note": "These files are checked for file type and size only. They are not read for invoice data and do not replace the Monthly invoice report PDF for reconciliation."
         }
       ],
       "steps": [],
@@ -362,9 +355,9 @@ export const helpContent: HelpContent = {
     {
       "id": "export-sage-customer-csv",
       "categoryId": "removals-manager-exports",
-      "title": "Export your Sage Customer CSV",
-      "summary": "Export customer information from Removals Manager.",
-      "introduction": "This optional export provides customer details, including addresses, which may help when matching or preparing customer records.",
+      "title": "Upload your Customer List CSV",
+      "summary": "Upload and preview your Removals Manager customer list.",
+      "introduction": "Customer List Upload reads JobID, Customer, Tel, Mobile, Email and Address. The full customer list can be uploaded; customers remain separate from invoice rows and no Sage contacts are created by uploading it.",
       "keywords": [
         "sage",
         "customer",
@@ -373,63 +366,60 @@ export const helpContent: HelpContent = {
         "addresses",
         "download"
       ],
-      "contentStatus": "draft",
-      "reviewNote": "Draft instructions supplied for review. The customer export's menu path, date controls, file contents and download method have not been verified in Removals Manager. Optional here refers to a separate reference export: the current conversion tool cannot import this file.",
-      "toolTarget": "sage-conversion",
-      "toolLabel": "Go to Customer matching",
+      "contentStatus": "ready",
+      "toolTarget": "add-files",
+      "toolLabel": "Go to Customer List Upload",
       "callouts": [
         {
           "type": "important",
-          "title": "No customer CSV upload in this version",
-          "body": "The conversion tool does not read a Sage Customer CSV or use it to fill addresses. Use Customer matching to search for and confirm existing Sage contacts. Customer addresses need checking in Sage."
+          "title": "Use the customer list format",
+          "body": "Choose a CSV containing JobID, Customer, Tel, Mobile, Email and Address. Address parts in extra blank-headed columns after Address are combined. Save an Excel workbook as CSV before uploading; .xlsx files cannot be read here."
         },
         {
           "type": "tip",
-          "title": "Keep customer details as a reference",
-          "body": "This file may be particularly helpful when customer address information is required. In this version it can only be a separate reference; it is not an upload used by the tool."
+          "title": "Keep records distinct",
+          "body": "Repeated customer names are kept separate by JobID. Rows with no customer details are skipped and counted. Phone numbers are kept as supplied in the CSV."
         }
       ],
       "steps": [
         {
           "id": "customer-open-maintenance",
-          "title": "Open Sage maintenance",
-          "body": "In Removals Manager, go to System Maintenance → Sage.",
+          "title": "Prepare your customer export",
+          "body": "Use your Removals Manager customer list export. If it is open in Excel, save a copy as CSV.",
           "screenshot": null
         },
         {
           "id": "customer-open-management",
-          "title": "Open File Management",
-          "body": "Find the Generate Sage Customer CSV File option.",
+          "title": "Check the column headings",
+          "body": "Include JobID, Customer, Tel, Mobile, Email and Address. Each named record needs a JobID; telephone, mobile, email and address may be blank.",
           "screenshot": null
         },
         {
           "id": "customer-select-export",
-          "title": "Select the customer export",
-          "body": "Choose Generate Sage Customer CSV File.",
+          "title": "Open Customer List Upload",
+          "body": "In Add files, find Customer List Upload beside the monthly invoice report.",
           "screenshot": null
         },
         {
           "id": "customer-select-dates",
-          "title": "Select your dates",
-          "body": "Enter the From and To dates for the customer information you need.",
+          "title": "Choose your CSV",
+          "body": "Select Choose CSV or drag the customer CSV into that upload box. The customer list is optional and can include all customers.",
           "screenshot": null
         },
         {
           "id": "customer-generate-report",
-          "title": "Generate the report",
-          "body": "Select the option to generate the customer CSV report.",
+          "title": "Read and check the list",
+          "body": "Select Check files. The message shows the number of customers read and any empty customer entries skipped. An invoice CSV is still needed for invoice conversion.",
           "screenshot": null
         },
         {
           "id": "customer-save-csv",
-          "title": "Save the CSV file",
-          "body": "Download the generated CSV to your computer and give it a descriptive filename.",
-          "screenshot": null,
-          "status": "to-be-confirmed",
-          "reviewNote": "To be confirmed: the exact download method has not been tested. The wording below is proposed for review, not a confirmed download instruction."
+          "title": "Find customer details",
+          "body": "Expand Preview customer list and search by name, JobID or contact details. Up to ten matches are shown at once. Use Remove file or Clear files to discard the uploaded list.",
+          "screenshot": null
         }
       ],
-      "exampleFilename": "Sage-Customers-September-2026.csv",
+      "exampleFilename": "customer_list.csv",
       "relatedGuideIds": [
         "before-you-start",
         "sage-mappings-customers",
@@ -469,16 +459,16 @@ export const helpContent: HelpContent = {
           "body": "Upload the relevant Removals Manager CSV files to their corresponding fields.",
           "screenshot": null,
           "details": [
-            "Use Removal invoices CSV for the main removals invoice export. Choose CSV opens the file picker; you can also drop a file into its field. A Sage Customer CSV is not supported."
+            "Use Removal invoices CSV for the main removals invoice export. Choose CSV opens the file picker; you can also drop a file into its field. Use Customer List Upload for a customer export; do not place it in an invoice CSV field."
           ]
         },
         {
           "id": "upload-invoice-reports",
           "title": "Add invoice reports",
-          "body": "Where available, add your Monthly Invoice Report PDF or supported individual invoice PDFs.",
+          "body": "Where available, paste the monthly invoice report or upload its PDF. Add the optional customer list in Customer List Upload.",
           "screenshot": null,
           "details": [
-            "Use Monthly invoice report PDF for the report used in reconciliation. Individual invoice PDFs allows multiple files, but these are checked for file type and size only; they are not read as invoice data."
+            "The monthly invoice report supports reconciliation. Customer List Upload reads a separate reference list with JobID, Customer, Tel, Mobile, Email and Address; it does not create invoice rows."
           ]
         },
         {
@@ -512,7 +502,7 @@ export const helpContent: HelpContent = {
         {
           "type": "important",
           "title": "File limits and processing",
-          "body": "CSV fields accept one .csv file each; PDF fields accept .pdf files, with multiple files allowed only in Individual invoice PDFs. Files must not be empty and must be no larger than 20 MB each. At least one supported invoice CSV is needed to produce invoice rows."
+          "body": "Each upload field accepts one file: .csv for invoice exports and Customer List Upload, or .pdf for the monthly report PDF option. Files must not be empty and must be no larger than 20 MB each. At least one supported invoice CSV is needed to produce invoice rows."
         }
       ],
       "relatedGuideIds": [
@@ -555,7 +545,7 @@ export const helpContent: HelpContent = {
           "body": "Compare the relevant invoice totals and VAT figures against your Removals Manager reports.",
           "screenshot": null,
           "details": [
-            "In Reconciliation, compare CSV total with Report total. Add an invoice CSV and either paste the monthly report table or upload its PDF. Pasted reports have no separate VAT column, so CSV VAT is retained and is not checked against the pasted report. PDF VAT is compared where supplied. Individual invoice PDFs do not supply these comparison figures."
+            "In Reconciliation, compare CSV total with Report total. Add an invoice CSV and either paste the monthly report table or upload its PDF. Pasted reports have no separate VAT column, so CSV VAT is retained and is not checked against the pasted report. PDF VAT is compared where supplied. The customer list provides reference contact details and does not supply invoice totals."
           ]
         },
         {
@@ -718,7 +708,7 @@ export const helpContent: HelpContent = {
           "body": "Review any unmatched or uncertain customer information.",
           "screenshot": null,
           "details": [
-            "Check the source report and search again before saving a match. Where the tool offers Create with TEST details, it creates a customer only after confirmation and uses temporary TEST address details. Complete those details in Sage before sending an invoice. The tool does not import a Sage Customer CSV."
+            "Check the source report and search again before saving a match. Where the tool offers Create with TEST details, it creates a customer only after confirmation and uses temporary TEST address details. Complete those details in Sage before sending an invoice. Customer List Upload provides a searchable reference list; it does not automatically fill or create Sage contacts."
           ]
         },
         {
@@ -865,7 +855,7 @@ export const helpContent: HelpContent = {
       "title": "Why are some customer details missing?",
       "summary": "Understand where customer names come from and how addresses are handled.",
       "contentStatus": "ready",
-      "answer": "The invoice export may not contain every customer detail. This version reads customer names from the Monthly invoice report PDF where possible and lets you confirm existing Sage contacts in Customer matching. It does not import a Sage Customer CSV or use it to fill addresses. Any customer created using Create with TEST details has temporary address details that must be completed in Sage.",
+      "answer": "The invoice export may not contain every customer detail. This version reads invoice customer names from the monthly invoice report where possible and lets you confirm existing Sage contacts in Customer matching. Customer List Upload can read and show your customer list, including addresses, as reference data. It does not automatically fill Sage addresses. Any customer created using Create with TEST details has temporary address details that must be completed in Sage.",
       "keywords": [
         "customer",
         "addresses",

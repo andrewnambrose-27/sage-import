@@ -6,6 +6,7 @@ import { connectionIndicator, sageConnectionPanelCss, sageConnectionPanelJs } fr
 import { browserFunctionSource } from "../src/browserFunctionSource";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
+import { CustomerListError, parseCustomerListCsv, type CustomerListResult } from "../src/customerList";
 import { maxPastedReportLength, monthlyReportTableText, parsePastedMonthlyReport, PastedReportError } from "../src/pastedMonthlyReport";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
@@ -69,7 +70,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261025-2";
+const APP_ASSET_VERSION = "20261025-3";
 const BRAND_LOGO_PATH = "/Removals%20Manager%20to%20Sage%20logo.png";
 const faviconLinks = `
     <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg">
@@ -240,6 +241,19 @@ async function handleCsvParse(request: Request): Promise<Response> {
   const rows = [];
   const monthlyReportText = String(form.get("monthlyReportText") ?? "");
   const pastedReportText = String(form.get("pastedMonthlyReport") ?? "");
+  const customerFile = form.get("customerList");
+  let customerList: (CustomerListResult & { file_name: string }) | null = null;
+  if (customerFile instanceof File) {
+    if (!customerFile.name.toLowerCase().endsWith(".csv") || customerFile.size === 0 || customerFile.size > 20 * 1024 * 1024) {
+      return jsonResponse({ error: "Choose a non-empty customer CSV file up to 20 MB.", field: "customerList" }, 400);
+    }
+    try {
+      customerList = { ...parseCustomerListCsv(await customerFile.text()), file_name: customerFile.name };
+    } catch (error) {
+      if (error instanceof CustomerListError) return jsonResponse({ error: error.message, field: "customerList" }, 400);
+      throw error;
+    }
+  }
   if (monthlyReportText.trim() && pastedReportText.trim()) {
     return jsonResponse({ error: "Choose one monthly report source: paste the table or upload its PDF, then check again." }, 400);
   }
@@ -292,8 +306,12 @@ async function handleCsvParse(request: Request): Promise<Response> {
     reconciliationResult.transactions,
     reconciliationResult.reconciliation,
   );
+  if (customerList) {
+    parsedFiles.push({ field: "customerList", file_name: customerList.file_name, transaction_type: "customer_list", rows: customerList.customers.length, warnings: [] });
+  }
 
   return jsonResponse({
+    customer_list: customerList,
     report_summary: {
       source: pastedReportText.trim() ? "paste" : monthlyReportText ? "pdf" : null,
       total_rows: pdfRows.length,
@@ -1862,7 +1880,7 @@ function uploadPage(): string {
             </li>
             <li>
               <h3>Other invoice exports <span>If applicable</span></h3>
-              <p>Gather any separate <strong>deposit, ad hoc invoice and credit note CSVs</strong> for the same period and add them to the matching upload fields. At least one supported invoice CSV is needed; a Sage Customer CSV cannot be uploaded here.</p>
+              <p>Gather any separate <strong>deposit, ad hoc invoice and credit note CSVs</strong> for the same period and add them to the matching upload fields. At least one supported invoice CSV is needed for conversion. Add your customer export separately in Customer List Upload.</p>
               <button class="secondary-button" type="button" data-help-open="before-you-start" aria-haspopup="dialog" aria-controls="help-guides" aria-expanded="false">Full file checklist &rarr;</button>
             </li>
           </ol>
@@ -1974,20 +1992,28 @@ function uploadPage(): string {
               </details>
             </article>
 
-            <article class="file-card" data-slot="invoicePdfs">
+            <article class="file-card" data-slot="customerList">
               <div>
-                <div class="help-info-heading"><h3>Individual invoice PDFs</h3>${renderContextualHelp("individual-invoices")}</div>
-                <p>Add a batch of invoice PDFs if you have them. Multiple files are allowed.</p>
+                <div class="help-info-heading"><h3>Customer List Upload</h3>${renderContextualHelp("customer-list")}</div>
+                <p>Add your Removals Manager customer list CSV, including the full list of customers. This is optional.</p>
               </div>
               <div class="file-dropzone">
                 <span class="drop-icon" aria-hidden="true">+</span>
-                <strong>Drop your PDFs here</strong>
-                <span>or choose them from your computer</span>
-                <label for="invoicePdfs">Choose PDFs</label>
-                <button class="file-remove-button" type="button" data-remove-file="invoicePdfs" hidden>Remove files</button>
+                <strong>Drop your customer CSV here</strong>
+                <span>or choose it from your computer</span>
+                <label for="customerList">Choose CSV</label>
+                <button class="file-remove-button" type="button" data-remove-file="customerList" hidden>Remove file</button>
               </div>
-              <input id="invoicePdfs" type="file" accept=".pdf,application/pdf" multiple>
-              <p class="field-message" id="invoicePdfsMessage">No files selected yet. This is optional.</p>
+              <input id="customerList" type="file" accept=".csv,text/csv,application/vnd.ms-excel">
+              <p class="field-message" id="customerListMessage">No file selected yet. This is optional.</p>
+              <p class="customer-list-note">Columns: JobID, Customer, Tel, Mobile, Email, Address. Select Check files to read the list. Uploading the list does not create Sage contacts.</p>
+              <details id="customerListPreview" class="customer-list-preview" hidden>
+                <summary>Preview customer list</summary>
+                <label for="customerListSearch">Find a customer</label>
+                <input id="customerListSearch" type="search" placeholder="Search name, JobID or contact details" autocomplete="off">
+                <p id="customerListPreviewCount" role="status"></p>
+                <div class="table-wrap"><table><thead><tr><th>JobID</th><th>Customer</th><th>Telephone</th><th>Mobile</th><th>Email</th><th>Address</th></tr></thead><tbody id="customerListPreviewBody"></tbody></table></div>
+              </details>
             </article>
           </form>
           <div class="upload-actions">
@@ -2960,7 +2986,7 @@ h2 {
   color: var(--danger);
 }
 
-.file-card input {
+.file-card input[type="file"] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -3012,6 +3038,16 @@ h2 {
 
 .monthly-report-pdf summary { cursor: pointer; color: var(--sage-dark); font-weight: 700; }
 .monthly-report-pdf .file-dropzone { margin: 12px 0; }
+
+.customer-list-note,
+.customer-list-preview p { color: var(--muted); font-size: 0.82rem; line-height: 1.5; }
+.customer-list-preview { min-width: 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.customer-list-preview summary { cursor: pointer; color: var(--sage-dark); font-weight: 700; }
+.customer-list-preview label { display: block; min-height: 0; margin: 12px 0 6px; padding: 0; background: none; color: var(--ink); text-align: left; }
+.customer-list-preview label:hover { background: none; }
+.customer-list-preview input { width: 100%; min-width: 0; min-height: 42px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 0.88rem; }
+.customer-list-preview .table-wrap { max-height: 320px; margin-top: 12px; }
+.customer-list-preview table { font-size: 0.8rem; }
 
 .field-message {
   grid-column: 1 / -1;
@@ -4226,6 +4262,11 @@ const uploadForm = document.querySelector("#uploadForm");
 const pastedMonthlyReport = document.querySelector("#pastedMonthlyReport");
 const pastedReportMessage = document.querySelector("#pastedReportMessage");
 const clearPastedReportButton = document.querySelector("#clearPastedReportButton");
+const customerListPreview = document.querySelector("#customerListPreview");
+const customerListSearch = document.querySelector("#customerListSearch");
+const customerListPreviewCount = document.querySelector("#customerListPreviewCount");
+const customerListPreviewBody = document.querySelector("#customerListPreviewBody");
+let uploadedCustomers = [];
 const summaryBody = document.querySelector("#summaryBody");
 const summaryNotice = document.querySelector("#summaryNotice");
 const classificationSummary = document.querySelector("#classificationSummary");
@@ -4368,12 +4409,12 @@ const uploadSlots = [
     mimeTypes: ["application/pdf"],
   },
   {
-    id: "invoicePdfs",
-    label: "Individual invoice PDFs",
-    kind: "PDF",
-    multiple: true,
-    extensions: [".pdf"],
-    mimeTypes: ["application/pdf"],
+    id: "customerList",
+    label: "Customer List Upload",
+    kind: "Customer CSV",
+    multiple: false,
+    extensions: [".csv"],
+    mimeTypes: ["text/csv", "application/vnd.ms-excel"],
   },
 ];
 
@@ -4472,6 +4513,42 @@ clearPastedReportButton.addEventListener("click", () => {
   pastedMonthlyReport.dispatchEvent(new Event("input", { bubbles: true }));
   pastedMonthlyReport.focus();
 });
+
+customerListSearch.addEventListener("input", renderCustomerListPreview);
+
+function renderCustomerListPreview() {
+  customerListPreview.hidden = uploadedCustomers.length === 0;
+  if (!uploadedCustomers.length) {
+    customerListPreview.open = false;
+    customerListPreviewBody.innerHTML = "";
+    customerListPreviewCount.textContent = "";
+    return;
+  }
+  const query = customerListSearch.value.trim().toLowerCase();
+  const matches = query ? uploadedCustomers.filter(customer => Object.values(customer).some(value => String(value).toLowerCase().includes(query))) : uploadedCustomers;
+  const visible = matches.slice(0, 10);
+  customerListPreviewCount.textContent = "Showing " + visible.length + " of " + matches.length + " customer" + plural(matches.length) + (matches.length > 10 ? ". Refine the search to find a particular customer." : ".");
+  customerListPreviewBody.innerHTML = visible.length ? visible.map(customer => "<tr>" +
+    [customer.job_id, customer.customer_name, customer.telephone, customer.mobile, customer.email, customer.address].map(value => tableCell(value || "—")).join("") + "</tr>").join("")
+    : '<tr><td colspan="6" class="empty-state">No customers match your search.</td></tr>';
+}
+
+function resetCustomerListPreview() {
+  uploadedCustomers = [];
+  customerListSearch.value = "";
+  renderCustomerListPreview();
+}
+
+function showCustomerListResult(result) {
+  uploadedCustomers = result?.customers || [];
+  customerListSearch.value = "";
+  renderCustomerListPreview();
+  if (!result) return "";
+  const message = uploadedCustomers.length + " customer" + plural(uploadedCustomers.length) + " read" +
+    (result.skipped_empty_rows ? "; " + result.skipped_empty_rows + " empty customer entr" + (result.skipped_empty_rows === 1 ? "y" : "ies") + " skipped" : "") + ".";
+  setFieldMessage("customerList", message, "success");
+  return message;
+}
 
 loadSageStatus();
 loadSageReferences();
@@ -4952,6 +5029,7 @@ checkButton.addEventListener("click", async () => {
   const failedItems = selectedItems.filter((item) => !item.passed);
 
   const hasPastedReport = Boolean(pastedMonthlyReport.value.trim());
+  const hasCustomerList = getFiles(uploadSlots.find(item => item.id === "customerList")).length > 0;
   clearButton.disabled = selectedItems.length === 0 && !hasPastedReport;
 
   try {
@@ -4985,7 +5063,7 @@ checkButton.addEventListener("click", async () => {
     const csvSummaries = summaries.filter((item) => item.kind === "CSV" && !item.missing);
     const pdfSummaries = summaries.filter((item) => item.kind === "PDF" && !item.missing);
 
-    if (csvSummaries.length === 0 && !hasPastedReport) {
+    if (csvSummaries.length === 0 && !hasPastedReport && !hasCustomerList) {
       renderNotice("success", pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed the basic checks. Add a CSV export when you are ready to parse rows.");
       renderFileSummary(summaries);
       renderReconciliationEmpty("Add a CSV export before reconciliation.");
@@ -4997,27 +5075,31 @@ checkButton.addEventListener("click", async () => {
     }
 
     const result = await parseCsvFiles();
+    const customerMessage = showCustomerListResult(result.customer_list);
     if (hasPastedReport) {
       const report = result.report_summary;
       pastedReportMessage.textContent = report.total_rows + " invoice row" + plural(report.total_rows) + " read; " + report.excluded_storage_rows + " storage row" + plural(report.excluded_storage_rows) + " excluded. VAT is not checked against this report.";
       pastedReportMessage.className = "field-message success";
-      if (csvSummaries.length === 0) {
-        renderFileSummary(summaries);
-        renderNotice("success", pastedReportMessage.textContent + " Add a CSV export to compare invoice totals and customer details.");
-        renderReconciliationEmpty("Add a CSV export before reconciliation.");
-        reconciliationIntro.textContent = "The pasted report is valid. Add a CSV export to compare invoice totals.";
-        resetReviewScreen();
-        resultsIntro.textContent = "Monthly report checked. Add a CSV export to continue.";
-        checkOutcome = "success";
-        return;
-      }
+    }
+    if (csvSummaries.length === 0) {
+      renderFileSummary(summaries);
+      renderNotice("success", [customerMessage, hasPastedReport ? pastedReportMessage.textContent : "", "Add an invoice CSV export to continue with invoice conversion."].filter(Boolean).join(" "));
+      renderReconciliationEmpty("Add an invoice CSV export before reconciliation.");
+      reconciliationIntro.textContent = "Supporting data checked. Add an invoice CSV export to compare invoice totals.";
+      resetReviewScreen();
+      resultsIntro.textContent = "Supporting data checked. Add an invoice CSV export to continue.";
+      checkOutcome = "success";
+      return;
     }
     checkOutcome = renderParsedRows(result, pdfSummaries);
   } catch (error) {
     renderNotice("error", error.message || "The files or pasted report could not be parsed. Please check the exports and try again.");
     renderEmpty("Parsing failed.");
     renderReconciliationEmpty("Check the report and files before reconciliation.");
-    if (hasPastedReport) {
+    if (error.field === "customerList") {
+      resetCustomerListPreview();
+      setFieldMessage("customerList", error.message, "error");
+    } else if (hasPastedReport) {
       pastedReportMessage.textContent = error.message || "The pasted report could not be read.";
       pastedReportMessage.className = "field-message error";
     }
@@ -5036,6 +5118,7 @@ clearButton.addEventListener("click", () => {
   workflowUploadRevision += 1;
   workflowCheckState = "idle";
   uploadForm.reset();
+  resetCustomerListPreview();
   pastedReportMessage.textContent = "No report pasted yet.";
   pastedReportMessage.className = "field-message";
   clearPastedReportButton.hidden = true;
@@ -5059,6 +5142,7 @@ clearButton.addEventListener("click", () => {
 });
 
 function updateFieldMessage(slot) {
+  if (slot.id === "customerList") resetCustomerListPreview();
   workflowUploadRevision += 1;
   workflowCheckState = "idle";
   setCheckButtonState("idle");
@@ -5203,6 +5287,8 @@ async function parseCsvFiles() {
       formData.append(slot.id, files[0]);
     }
   }
+  const customerList = getFiles(uploadSlots.find(item => item.id === "customerList"))[0];
+  if (customerList) formData.append("customerList", customerList);
 
   const monthlyReport = getFiles(uploadSlots.find((item) => item.id === "monthlyReport"))[0];
   if (pastedMonthlyReport.value.trim()) {
@@ -5219,7 +5305,9 @@ async function parseCsvFiles() {
 
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(result.error || "The files or pasted report could not be read. Please check the exports and try again.");
+    const error = new Error(result.error || "The files or pasted report could not be read. Please check the exports and try again.");
+    error.field = result.field;
+    throw error;
   }
 
   return response.json();
@@ -5231,11 +5319,11 @@ function renderParsedRows(result, pdfSummaries) {
   updatePreviewToggle(rows.length);
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfRowCount = Number(result.totals?.pdf_rows || result.pdf_rows?.length || 0);
-  const pdfText = result.report_summary?.source === "paste"
+  const pdfText = (result.report_summary?.source === "paste"
     ? " " + result.report_summary.total_rows + " invoice row" + plural(result.report_summary.total_rows) + " read from the pasted report; " + result.report_summary.excluded_storage_rows + " storage row" + plural(result.report_summary.excluded_storage_rows) + " excluded. VAT was not checked against the report."
     : pdfSummaries.length > 0
     ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " checked; " + pdfRowCount + " invoice row" + plural(pdfRowCount) + " read from the monthly report."
-    : "";
+    : "") + (result.customer_list ? " " + result.customer_list.customers.length + " customer records read from the customer list." : "");
   latestOriginalFileNames = [
     ...(result.files || []).map((file) => file.file_name).filter(Boolean),
     ...pdfSummaries.map((file) => file.fileName).filter(Boolean),
@@ -5568,6 +5656,7 @@ function workflowSnapshot() {
   return {
     fileCount: files.length + (pastedMonthlyReport.value.trim() ? 1 : 0),
     hasPastedReport: Boolean(pastedMonthlyReport.value.trim()),
+    hasCustomerList: getFiles(uploadSlots.find(item => item.id === "customerList")).length > 0,
     invalidFiles: files.filter(({ file, slot }) => validateFile(file, slot).length > 0).length,
     checkState: workflowCheckState,
     filesCurrent: workflowCheckedRevision === workflowUploadRevision,

@@ -28,6 +28,11 @@ describe("conversion workflow status from application state", () => {
     expect(deriveWorkflow(snapshot)[1].summary).toContain("Add a CSV export");
     expect(statuses({ ...parsed, hasPastedReport: true, filesCurrent: false })[1]).toBe("attention");
   });
+  it("validates a customer reference list without claiming invoice conversion is complete", () => {
+    const snapshot = { ...initial, fileCount: 1, hasCustomerList: true, checkState: "passed" as const, filesCurrent: true };
+    expect(statuses(snapshot)).toEqual(["completed", "ready", "not-started", "not-started", "not-started"]);
+    expect(deriveWorkflow(snapshot)[1].summary).toContain("Customer list checked. Add an invoice CSV export");
+  });
   it("requires actual parsed rows and reports unresolved checks separately from successful upload checks", () => {
     expect(statuses(parsed)).toEqual(["completed", "completed", "ready", "not-started", "not-started"]);
     expect(statuses({ ...parsed, importAttention: 3, reviewAttention: 2 })).toEqual(["completed", "attention", "attention", "not-started", "not-started"]);

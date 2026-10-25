@@ -12,6 +12,7 @@ export type WorkflowStatus = "not-started" | "ready" | "in-progress" | "attentio
 export interface WorkflowSnapshot {
   fileCount: number;
   hasPastedReport?: boolean;
+  hasCustomerList?: boolean;
   invalidFiles: number;
   checkState: "idle" | "checking" | "passed" | "failed";
   filesCurrent: boolean;
@@ -58,7 +59,7 @@ export function deriveWorkflow(snapshot: WorkflowSnapshot): WorkflowStepState[] 
 
   if (checked) states[1] = s.rowCount
     ? { status: s.importAttention ? "attention" : "completed", summary: count(s.rowCount, "row") + " parsed · " + (s.importAttention ? attention(s.importAttention) : "No unresolved import checks.") }
-    : { status: "ready", summary: s.hasPastedReport ? "Monthly report checked. Add a CSV export to compare invoice rows." : "PDF checks finished. Add a CSV export to read invoice rows." };
+    : { status: "ready", summary: s.hasCustomerList ? "Customer list checked. Add an invoice CSV export to continue." : s.hasPastedReport ? "Monthly report checked. Add a CSV export to compare invoice rows." : "PDF checks finished. Add a CSV export to read invoice rows." };
   else if (s.checkState === "failed") states[1] = { status: "attention", summary: "File check results need attention." };
 
   if (imported) {
