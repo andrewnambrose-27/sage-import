@@ -217,10 +217,12 @@ export const helpContent: HelpContent = {
     {
       "id": "supporting-pdf-reports",
       "categoryId": "removals-manager-exports",
-      "title": "Export your Monthly Invoice Report (PDF)",
-      "summary": "Download the monthly invoice report from Removals Manager.",
-      "introduction": "This report is used by the conversion tool to help identify customers, check invoice totals and VAT, and distinguish removals deposits.",
+      "title": "Copy or export your Monthly Invoice Report",
+      "summary": "Copy the monthly report table from Removals Manager, or upload a PDF.",
+      "introduction": "The report helps identify customers and compare invoice totals. Pasted tables contain no separate VAT figure, so VAT remains sourced from the CSV and is not checked against the pasted report. PDF reports can also check VAT where it is supplied.",
       "keywords": [
+        "copy",
+        "paste",
         "export",
         "download",
         "monthly",
@@ -261,14 +263,14 @@ export const helpContent: HelpContent = {
         },
         {
           "id": "pdf-save-report",
-          "title": "Save the report as a PDF",
-          "body": "Use your browser's Print option and choose Save as PDF as the destination.",
+          "title": "Copy the complete report table",
+          "body": "In the report tab, select all (Ctrl+A on Windows or Cmd+A on Mac) and copy. Include the column headings. Return to the tool and paste into Paste report table, then add your CSV exports and select Check files.",
           "screenshot": null
         },
         {
           "id": "pdf-name-file",
-          "title": "Name and save your file",
-          "body": "Save the PDF to your computer. Include the month and year in the filename so it is easy to identify later.",
+          "title": "Use a PDF instead if preferred",
+          "body": "Alternatively, use your browser's Print option and choose Save as PDF. In the tool, expand Or upload a PDF instead and choose that file. Use one monthly report source at a time: pasted table or PDF.",
           "screenshot": null
         }
       ],
@@ -277,7 +279,7 @@ export const helpContent: HelpContent = {
         {
           "type": "tip",
           "title": "Check the reporting period",
-          "body": "Check that the PDF covers the correct period before uploading it."
+          "body": "Check that the report covers the correct period and that the invoice row count shown after checking matches your report. Storage rows are excluded from reconciliation as before."
         }
       ],
       "relatedGuideIds": [
@@ -553,7 +555,7 @@ export const helpContent: HelpContent = {
           "body": "Compare the relevant invoice totals and VAT figures against your Removals Manager reports.",
           "screenshot": null,
           "details": [
-            "In Reconciliation, compare CSV total with PDF total and CSV VAT with PDF VAT. This comparison needs an invoice CSV and a readable Monthly invoice report PDF. Individual invoice PDFs do not supply these comparison figures."
+            "In Reconciliation, compare CSV total with Report total. Add an invoice CSV and either paste the monthly report table or upload its PDF. Pasted reports have no separate VAT column, so CSV VAT is retained and is not checked against the pasted report. PDF VAT is compared where supplied. Individual invoice PDFs do not supply these comparison figures."
           ]
         },
         {

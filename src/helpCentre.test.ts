@@ -63,7 +63,7 @@ describe("Help Centre content and search", () => {
   it("includes the ten supplied article titles and seven searchable FAQ answers", () => {
     const titles = helpContent.guides.map((guide) => guide.title);
     for (const title of [
-      "How the conversion process works", "Files you'll need", "Export your Monthly Invoice Report (PDF)",
+      "How the conversion process works", "Files you'll need", "Copy or export your Monthly Invoice Report",
       "Export your Sage Invoice CSV", "Export your Sage Customer CSV", "Upload and check your files",
       "Check your import and reconciliation", "Review transactions and save your batch",
       "Configure Sage and match customers", "Check and create Sage draft invoices",

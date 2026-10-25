@@ -6,6 +6,7 @@ import { connectionIndicator, sageConnectionPanelCss, sageConnectionPanelJs } fr
 import { browserFunctionSource } from "../src/browserFunctionSource";
 import { DuplicateSourceInvoiceError, createImportDatabase, normalizeCustomerName, type SourceInvoiceRecord } from "../src/db";
 import { parseMonthlyInvoiceReportText } from "../src/monthlyReportParser";
+import { maxPastedReportLength, monthlyReportTableText, parsePastedMonthlyReport, PastedReportError } from "../src/pastedMonthlyReport";
 import { reconcileTransactionsWithPdf } from "../src/reconciliation";
 import { parseRemovalsCsv, type TransactionType } from "../src/removalsParser";
 import {
@@ -68,7 +69,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261025-1";
+const APP_ASSET_VERSION = "20261025-2";
 const BRAND_LOGO_PATH = "/Removals%20Manager%20to%20Sage%20logo.png";
 const faviconLinks = `
     <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg">
@@ -238,6 +239,17 @@ async function handleCsvParse(request: Request): Promise<Response> {
   const parsedFiles = [];
   const rows = [];
   const monthlyReportText = String(form.get("monthlyReportText") ?? "");
+  const pastedReportText = String(form.get("pastedMonthlyReport") ?? "");
+  if (monthlyReportText.trim() && pastedReportText.trim()) {
+    return jsonResponse({ error: "Choose one monthly report source: paste the table or upload its PDF, then check again." }, 400);
+  }
+  let pdfRows: ReturnType<typeof parseMonthlyInvoiceReportText>;
+  try {
+    pdfRows = pastedReportText.trim() ? parsePastedMonthlyReport(pastedReportText) : monthlyReportText ? parseMonthlyInvoiceReportText(monthlyReportText) : [];
+  } catch (error) {
+    if (error instanceof PastedReportError) return jsonResponse({ error: error.message }, 400);
+    throw error;
+  }
 
   for (const config of files) {
     const file = form.get(config.formName);
@@ -273,9 +285,8 @@ async function handleCsvParse(request: Request): Promise<Response> {
     rows.push(...parsedRows);
   }
 
-  const pdfRows = monthlyReportText ? parseMonthlyInvoiceReportText(monthlyReportText) : [];
   const reconciliationResult = pdfRows.length > 0
-    ? reconcileTransactionsWithPdf(rows, pdfRows)
+    ? reconcileTransactionsWithPdf(rows, pdfRows, pastedReportText.trim() ? { sourceLabel: "pasted report", compareVat: false } : {})
     : { transactions: rows, pdf_rows: [], reconciliation: [] };
   const classificationResult = classifyTransactions(
     reconciliationResult.transactions,
@@ -283,6 +294,12 @@ async function handleCsvParse(request: Request): Promise<Response> {
   );
 
   return jsonResponse({
+    report_summary: {
+      source: pastedReportText.trim() ? "paste" : monthlyReportText ? "pdf" : null,
+      total_rows: pdfRows.length,
+      excluded_storage_rows: pdfRows.filter(row => row.excluded).length,
+      vat_checked: !pastedReportText.trim(),
+    },
     files: parsedFiles,
     rows: classificationResult.transactions,
     pdf_rows: reconciliationResult.pdf_rows,
@@ -1932,9 +1949,19 @@ function uploadPage(): string {
 
             <article class="file-card" data-slot="monthlyReport">
               <div>
-                <div class="help-info-heading"><h3>Monthly invoice report PDF</h3>${renderContextualHelp("monthly-report")}</div>
-                <p>Add the monthly invoice report PDF if it is available for checking later.</p>
+                <div class="help-info-heading"><h3>Monthly invoice report</h3>${renderContextualHelp("monthly-report")}</div>
+                <p>Paste the report table from its Removals Manager tab, or upload a PDF instead. This is optional.</p>
               </div>
+              <div class="monthly-report-paste">
+                <label for="pastedMonthlyReport">Paste report table</label>
+                <p id="pastedReportHelp">In the monthly report tab, select all (Ctrl+A or Cmd+A), copy, then paste here. Include the column headings.</p>
+                <textarea id="pastedMonthlyReport" rows="5" maxlength="${maxPastedReportLength}" aria-describedby="pastedReportHelp pastedReportMessage" placeholder="Paste the table starting with Date, System inv no., Invoice no., Customer name…" spellcheck="false"></textarea>
+                <p class="field-message" id="pastedReportMessage" role="status">No report pasted yet.</p>
+                <button id="clearPastedReportButton" class="secondary-button" type="button" hidden>Clear pasted report</button>
+                <p class="report-vat-note">The pasted report checks invoice totals and customer details. It has no separate VAT column, so VAT stays sourced from your CSV and is not checked against this report.</p>
+              </div>
+              <details class="monthly-report-pdf">
+                <summary>Or upload a PDF instead</summary>
               <div class="file-dropzone">
                 <span class="drop-icon" aria-hidden="true">+</span>
                 <strong>Drop your PDF here</strong>
@@ -1944,6 +1971,7 @@ function uploadPage(): string {
               </div>
               <input id="monthlyReport" type="file" accept=".pdf,application/pdf">
               <p class="field-message" id="monthlyReportMessage">No file selected yet. This is optional.</p>
+              </details>
             </article>
 
             <article class="file-card" data-slot="invoicePdfs">
@@ -2018,7 +2046,7 @@ function uploadPage(): string {
             <div class="section-heading">
               <div>
                 <div class="help-info-heading"><h3 id="reconciliation-title">Reconciliation</h3>${renderContextualHelp("reconciliation")}</div>
-                <p id="reconciliationIntro">Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.</p>
+                <p id="reconciliationIntro">Add CSV exports and paste the monthly invoice report or upload its PDF to compare invoice-level totals.</p>
               </div>
             </div>
             <div id="reconciliationTableWrap" class="table-wrap reconciliation-table-wrap preview-collapsed">
@@ -2030,9 +2058,9 @@ function uploadPage(): string {
                     <th>Customer</th>
                     <th>Service</th>
                     <th>CSV total</th>
-                    <th>PDF total</th>
+                    <th>Report total</th>
                     <th>CSV VAT</th>
-                    <th>PDF VAT</th>
+                    <th>Report VAT</th>
                     <th>Warnings</th>
                   </tr>
                 </thead>
@@ -2939,6 +2967,51 @@ h2 {
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
+.monthly-report-paste {
+  display: grid;
+  gap: 10px;
+}
+
+.monthly-report-paste label {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  white-space: normal;
+}
+
+.monthly-report-paste label:hover { background: none; }
+
+.monthly-report-paste textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 140px;
+  padding: 12px;
+  border: 1px solid #8daea6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.monthly-report-paste .report-vat-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.monthly-report-pdf {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.monthly-report-pdf summary { cursor: pointer; color: var(--sage-dark); font-weight: 700; }
+.monthly-report-pdf .file-dropzone { margin: 12px 0; }
 
 .field-message {
   grid-column: 1 / -1;
@@ -4139,7 +4212,7 @@ tr.risky-row.high-risk {
 }
 ` + helpCentreCss + workflowCss + sageConnectionPanelCss;
 
-export const appJs = "const connectionIndicator = " + browserFunctionSource(connectionIndicator) + ";\n" + sageConnectionPanelJs + "\nconst deriveWorkflow = " + browserFunctionSource(deriveWorkflow) + ";\nconst workflowHasBlockingWarning = " + browserFunctionSource(hasBlockingWarning) + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
+export const appJs = "const monthlyReportTableText = " + browserFunctionSource(monthlyReportTableText) + ";\nconst connectionIndicator = " + browserFunctionSource(connectionIndicator) + ";\n" + sageConnectionPanelJs + "\nconst deriveWorkflow = " + browserFunctionSource(deriveWorkflow) + ";\nconst workflowHasBlockingWarning = " + browserFunctionSource(hasBlockingWarning) + ";\nconst workflowSteps = " + JSON.stringify(workflowSteps) + ";\n" + workflowControllerJs + String.raw`
 const topbar = document.querySelector(".topbar");
 if (topbar) {
   const updateTopbarHeight = () => {
@@ -4150,6 +4223,9 @@ if (topbar) {
 }
 const currencySelector = document.querySelector("#currencySelector");
 const uploadForm = document.querySelector("#uploadForm");
+const pastedMonthlyReport = document.querySelector("#pastedMonthlyReport");
+const pastedReportMessage = document.querySelector("#pastedReportMessage");
+const clearPastedReportButton = document.querySelector("#clearPastedReportButton");
 const summaryBody = document.querySelector("#summaryBody");
 const summaryNotice = document.querySelector("#summaryNotice");
 const classificationSummary = document.querySelector("#classificationSummary");
@@ -4354,6 +4430,48 @@ for (const slot of uploadSlots) {
 }
 
 updateUploadActionState();
+
+pastedMonthlyReport.addEventListener("input", () => {
+  workflowUploadRevision += 1;
+  workflowCheckState = "idle";
+  pastedReportMessage.textContent = pastedMonthlyReport.value.trim() ? "Report pasted. Select Check files to validate the invoice rows." : "No report pasted yet.";
+  pastedReportMessage.className = "field-message";
+  clearPastedReportButton.hidden = !pastedMonthlyReport.value;
+  setCheckButtonState("idle");
+  updateUploadActionState();
+});
+
+pastedMonthlyReport.addEventListener("paste", (event) => {
+  const html = event.clipboardData?.getData("text/html") || "";
+  const plainText = event.clipboardData?.getData("text/plain") || "";
+  if (plainText.length > pastedMonthlyReport.maxLength || html.length > 5000000) {
+    event.preventDefault();
+    pastedReportMessage.textContent = "The pasted report is too large. Paste one monthly report at a time.";
+    pastedReportMessage.className = "field-message error";
+    return;
+  }
+  if (!html) return;
+  const clipboard = new DOMParser().parseFromString(html, "text/html");
+  const table = Array.from(clipboard.querySelectorAll("table")).find(candidate => Array.from(candidate.querySelectorAll("tr")).some(row =>
+    Array.from(row.children).some(cell => (cell.textContent || "").toLowerCase().replace(/[^a-z0-9]/g, "") === "systeminvno")));
+  if (!table) return;
+  const text = monthlyReportTableText(Array.from(table.querySelectorAll("tr")).map(row => Array.from(row.children)
+    .filter(cell => cell.tagName === "TD" || cell.tagName === "TH").map(cell => cell.textContent || "")));
+  event.preventDefault();
+  if (text.length > pastedMonthlyReport.maxLength) {
+    pastedReportMessage.textContent = "The pasted report is too large. Paste one monthly report at a time.";
+    pastedReportMessage.className = "field-message error";
+    return;
+  }
+  pastedMonthlyReport.value = text;
+  pastedMonthlyReport.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
+clearPastedReportButton.addEventListener("click", () => {
+  pastedMonthlyReport.value = "";
+  pastedMonthlyReport.dispatchEvent(new Event("input", { bubbles: true }));
+  pastedMonthlyReport.focus();
+});
 
 loadSageStatus();
 loadSageReferences();
@@ -4833,16 +4951,24 @@ checkButton.addEventListener("click", async () => {
   const selectedItems = summaries.filter((item) => !item.missing);
   const failedItems = selectedItems.filter((item) => !item.passed);
 
-  clearButton.disabled = selectedItems.length === 0;
+  const hasPastedReport = Boolean(pastedMonthlyReport.value.trim());
+  clearButton.disabled = selectedItems.length === 0 && !hasPastedReport;
 
   try {
-    if (selectedItems.length === 0) {
+    if (hasPastedReport && getFiles(uploadSlots.find(item => item.id === "monthlyReport")).length > 0) {
+      renderNotice("error", "Choose one monthly report source: clear the pasted table or remove the monthly PDF, then check again.");
+      renderEmpty("Choose one monthly report source before checking.");
+      renderReconciliationEmpty("No reconciliation run yet.");
+      resetReviewScreen();
+      return;
+    }
+    if (selectedItems.length === 0 && !hasPastedReport) {
       renderNotice("error", "No files selected. Add any exports or PDFs you have, then check again.");
       renderEmpty("No files checked yet.");
       renderReconciliationEmpty("No reconciliation run yet.");
       resetReviewScreen();
       resultsIntro.textContent = "Nothing has been selected yet.";
-      reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
+      reconciliationIntro.textContent = "Add CSV exports and paste the monthly invoice report or upload its PDF to compare invoice-level totals.";
       return;
     }
 
@@ -4859,22 +4985,42 @@ checkButton.addEventListener("click", async () => {
     const csvSummaries = summaries.filter((item) => item.kind === "CSV" && !item.missing);
     const pdfSummaries = summaries.filter((item) => item.kind === "PDF" && !item.missing);
 
-    if (csvSummaries.length === 0) {
+    if (csvSummaries.length === 0 && !hasPastedReport) {
       renderNotice("success", pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " passed the basic checks. Add a CSV export when you are ready to parse rows.");
       renderFileSummary(summaries);
       renderReconciliationEmpty("Add a CSV export before reconciliation.");
       resetReviewScreen();
       resultsIntro.textContent = "PDFs are not parsed in this step.";
-      reconciliationIntro.textContent = "Reconciliation needs at least one CSV export and the monthly invoice report PDF.";
+      reconciliationIntro.textContent = "Reconciliation needs at least one CSV export and a pasted monthly report or its PDF.";
       checkOutcome = "success";
       return;
     }
 
     const result = await parseCsvFiles();
+    if (hasPastedReport) {
+      const report = result.report_summary;
+      pastedReportMessage.textContent = report.total_rows + " invoice row" + plural(report.total_rows) + " read; " + report.excluded_storage_rows + " storage row" + plural(report.excluded_storage_rows) + " excluded. VAT is not checked against this report.";
+      pastedReportMessage.className = "field-message success";
+      if (csvSummaries.length === 0) {
+        renderFileSummary(summaries);
+        renderNotice("success", pastedReportMessage.textContent + " Add a CSV export to compare invoice totals and customer details.");
+        renderReconciliationEmpty("Add a CSV export before reconciliation.");
+        reconciliationIntro.textContent = "The pasted report is valid. Add a CSV export to compare invoice totals.";
+        resetReviewScreen();
+        resultsIntro.textContent = "Monthly report checked. Add a CSV export to continue.";
+        checkOutcome = "success";
+        return;
+      }
+    }
     checkOutcome = renderParsedRows(result, pdfSummaries);
   } catch (error) {
-    renderNotice("error", "The CSV files could not be parsed. Please try again or check the exports.");
+    renderNotice("error", error.message || "The files or pasted report could not be parsed. Please check the exports and try again.");
     renderEmpty("Parsing failed.");
+    renderReconciliationEmpty("Check the report and files before reconciliation.");
+    if (hasPastedReport) {
+      pastedReportMessage.textContent = error.message || "The pasted report could not be read.";
+      pastedReportMessage.className = "field-message error";
+    }
     resetReviewScreen();
     console.error(error);
   } finally {
@@ -4890,6 +5036,9 @@ clearButton.addEventListener("click", () => {
   workflowUploadRevision += 1;
   workflowCheckState = "idle";
   uploadForm.reset();
+  pastedReportMessage.textContent = "No report pasted yet.";
+  pastedReportMessage.className = "field-message";
+  clearPastedReportButton.hidden = true;
   for (const slot of uploadSlots) {
     setFieldMessage(slot.id, slot.multiple ? "No files selected yet. This is optional." : "No file selected yet. This is optional.", "");
     document.querySelector('[data-slot="' + slot.id + '"]').classList.remove("has-file");
@@ -4902,7 +5051,7 @@ clearButton.addEventListener("click", () => {
   renderReconciliationEmpty("No reconciliation run yet.");
   resetReviewScreen();
   resultsIntro.textContent = "Choose any files you have, then select Check files.";
-  reconciliationIntro.textContent = "Upload CSV exports and the monthly invoice report PDF to compare invoice-level totals.";
+  reconciliationIntro.textContent = "Add CSV exports and paste the monthly invoice report or upload its PDF to compare invoice-level totals.";
   clearButton.disabled = true;
   setCheckButtonState("idle");
   updateUploadActionState();
@@ -4931,7 +5080,7 @@ function updateFieldMessage(slot) {
 }
 
 function updateUploadActionState() {
-  const hasFiles = uploadSlots.some((item) => getFiles(item).length > 0);
+  const hasFiles = uploadSlots.some((item) => getFiles(item).length > 0) || Boolean(pastedMonthlyReport.value.trim());
   checkButton.disabled = !hasFiles;
   clearButton.disabled = !hasFiles;
 }
@@ -5056,6 +5205,9 @@ async function parseCsvFiles() {
   }
 
   const monthlyReport = getFiles(uploadSlots.find((item) => item.id === "monthlyReport"))[0];
+  if (pastedMonthlyReport.value.trim()) {
+    formData.append("pastedMonthlyReport", pastedMonthlyReport.value);
+  }
   if (monthlyReport) {
     formData.append("monthlyReportText", await extractPdfText(monthlyReport));
   }
@@ -5066,7 +5218,8 @@ async function parseCsvFiles() {
   });
 
   if (!response.ok) {
-    throw new Error("CSV parsing failed");
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.error || "The files or pasted report could not be read. Please check the exports and try again.");
   }
 
   return response.json();
@@ -5078,12 +5231,15 @@ function renderParsedRows(result, pdfSummaries) {
   updatePreviewToggle(rows.length);
   const warningCount = rows.filter((row) => row.warnings.length > 0).length;
   const pdfRowCount = Number(result.totals?.pdf_rows || result.pdf_rows?.length || 0);
-  const pdfText = pdfSummaries.length > 0
+  const pdfText = result.report_summary?.source === "paste"
+    ? " " + result.report_summary.total_rows + " invoice row" + plural(result.report_summary.total_rows) + " read from the pasted report; " + result.report_summary.excluded_storage_rows + " storage row" + plural(result.report_summary.excluded_storage_rows) + " excluded. VAT was not checked against the report."
+    : pdfSummaries.length > 0
     ? " " + pdfSummaries.length + " PDF file" + plural(pdfSummaries.length) + " checked; " + pdfRowCount + " invoice row" + plural(pdfRowCount) + " read from the monthly report."
     : "";
   latestOriginalFileNames = [
     ...(result.files || []).map((file) => file.file_name).filter(Boolean),
     ...pdfSummaries.map((file) => file.fileName).filter(Boolean),
+    ...(result.report_summary?.source === "paste" ? ["Pasted monthly invoice report"] : []),
   ];
   renderClassificationSummary(result.classification_summary);
   renderReconciliation(result.reconciliation || []);
@@ -5410,7 +5566,8 @@ function workflowSnapshot() {
   };
   const setupAttention = included.filter((row) => !configured(row) || !["ready_for_sage", "already_imported"].includes(row.sage_readiness)).length;
   return {
-    fileCount: files.length,
+    fileCount: files.length + (pastedMonthlyReport.value.trim() ? 1 : 0),
+    hasPastedReport: Boolean(pastedMonthlyReport.value.trim()),
     invalidFiles: files.filter(({ file, slot }) => validateFile(file, slot).length > 0).length,
     checkState: workflowCheckState,
     filesCurrent: workflowCheckedRevision === workflowUploadRevision,
@@ -6819,13 +6976,13 @@ function renderDraftPreviewHtml(preview) {
   const reconciliation = preview.reconciliation
     ? '<div class="draft-preview-grid">' +
         draftPreviewCard("Reconciled CSV gross", formatMinorMoney(preview.reconciliation.csv_gross_minor)) +
-        draftPreviewCard("Reconciled PDF gross", formatMinorMoney(preview.reconciliation.pdf_gross_minor)) +
+        draftPreviewCard("Reconciled report gross", formatMinorMoney(preview.reconciliation.pdf_gross_minor)) +
         draftPreviewCard("Draft gross", formatMoney(preview.totals.gross_minor / 100)) +
         draftPreviewCard("Reconciled CSV VAT", formatMinorMoney(preview.reconciliation.csv_vat_minor)) +
-        draftPreviewCard("Reconciled PDF VAT", formatMinorMoney(preview.reconciliation.pdf_vat_minor)) +
+        draftPreviewCard("Reconciled report VAT", formatMinorMoney(preview.reconciliation.pdf_vat_minor)) +
         draftPreviewCard("Draft VAT", formatMoney(preview.totals.vat_minor / 100)) +
       "</div>"
-    : '<p class="cell-muted">No monthly PDF totals were available to compare for this invoice.</p>';
+    : '<p class="cell-muted">No monthly report totals were available to compare for this invoice.</p>';
   return '<div class="draft-preview-grid">' +
       draftPreviewCard("Customer", preview.customer) +
       draftPreviewCard("Invoice reference", preview.invoice_reference) +
@@ -7037,8 +7194,8 @@ function renderClassificationSummary(summary) {
 function renderReconciliation(rows) {
   latestReconciliationRows = [...rows];
   if (rows.length === 0) {
-    renderReconciliationEmpty("No monthly PDF reconciliation available.");
-    reconciliationIntro.textContent = "Add the monthly invoice report PDF to compare against CSV rows.";
+    renderReconciliationEmpty("No monthly report reconciliation available.");
+    reconciliationIntro.textContent = "Paste the monthly invoice report or upload its PDF to compare against CSV rows.";
     return;
   }
 
@@ -7046,20 +7203,23 @@ function renderReconciliation(rows) {
 
   const issueCount = rows.filter((row) => row.status !== "matched").length;
   reconciliationIntro.textContent = issueCount === 0
-    ? rows.length + " invoice" + plural(rows.length) + " matched the monthly PDF report. Matching is a check only, not an approval."
-    : issueCount + " invoice" + plural(issueCount) + " need" + (issueCount === 1 ? "s" : "") + " review after comparing CSV and PDF data.";
+    ? rows.length + " invoice" + plural(rows.length) + " matched the monthly invoice report. Matching is a check only, not an approval."
+    : issueCount + " invoice" + plural(issueCount) + " need" + (issueCount === 1 ? "s" : "") + " review after comparing CSV and monthly report data.";
+  if (rows.some(row => row.vat_checked === false)) {
+    reconciliationIntro.textContent += " The pasted report has no separate VAT column. VAT is not checked against this report; CSV VAT is retained.";
+  }
 
   reconciliationBody.innerHTML = rows.map((row) => {
     const badgeClass = row.status === "matched" ? "" : row.status.includes("mismatch") || row.status.includes("missing") ? " error" : " warning";
     return "<tr>" +
       tableCell(row.invoice_number) +
-      '<td><span class="badge' + badgeClass + '">' + escapeHtml(formatStatus(row.status)) + "</span></td>" +
+      '<td><span class="badge' + badgeClass + '">' + escapeHtml(formatStatus(row.status).replace(/\bpdf\b/g, "report")) + "</span></td>" +
       tableCell(row.customer_name || "-") +
       tableCell(row.service_type || "-") +
       tableCell(formatMoney(row.csv_amount)) +
       tableCell(formatMoney(row.pdf_amount)) +
       tableCell(formatMoney(row.csv_vat)) +
-      tableCell(formatMoney(row.pdf_vat)) +
+      tableCell(row.vat_checked === false ? "Not provided" : formatMoney(row.pdf_vat)) +
       tableCell(row.warnings.length > 0 ? row.warnings.join(" ") : "OK") +
       "</tr>";
   }).join("");

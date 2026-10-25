@@ -21,7 +21,7 @@ This version can connect to Sage Business Cloud Accounting and, after a separate
 - CSV parsing for removals, deposits, ad hoc invoices and credit notes
 - Normalised invoice numbers, dates, amounts and VAT values
 - Monthly invoice report PDF text extraction and invoice-level reconciliation
-- Customer names and service types matched from the monthly PDF where possible
+- Customer names and service types matched from the monthly report (pasted table or PDF) where possible
 - Configurable transaction classification rules
 - Import-candidate, storage-exclusion, duplicate, mismatch and review summaries
 - Preview table with row-level warnings
@@ -243,7 +243,9 @@ An invoice is only marked `ready_for_sage` when it is included, not storage, not
 - Uploaded CSV files are sent to the Worker for in-memory parsing only.
 - Uploads are optional at this stage, so missing files are shown as optional rather than blocking.
 - CSV files are processed in memory and are not stored permanently.
-- The monthly invoice report PDF is read in memory for reconciliation only.
+- The monthly invoice report PDF or pasted report table is read in memory for reconciliation only.
+- To paste a monthly report, select all and copy in its Removals Manager report tab, then paste into **Paste report table**. Include the eight column headings and check the reported invoice count after selecting **Check files**. Use either pasted text or the monthly PDF, not both.
+- Pasted reports match using **System inv no.**, preserve blank **Invoice no.** cells, and exclude storage rows. The report's **Amt** is compared with CSV net plus VAT. There is no separate report VAT column: VAT is retained from the CSV and explicitly left unchecked against the report. PDF VAT checks still run where supplied.
 - Individual invoice PDFs are validated for type and size but are not parsed yet.
 - Rows marked `needs_review` or `exclude_storage` are not export-eligible by default.
 - The D1 save action stores normalized/reconciled row metadata, warnings and raw CSV row values for debugging, not the uploaded files.

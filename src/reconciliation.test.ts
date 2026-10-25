@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { MonthlyInvoiceReportRow } from "./monthlyReportParser";
 import { reconcileTransactionsWithPdf } from "./reconciliation";
+import { parsePastedMonthlyReport } from "./pastedMonthlyReport";
 import type { NormalizedTransaction } from "./removalsParser";
 
 describe("reconcileTransactionsWithPdf", () => {
+  it("checks pasted report gross totals without inventing VAT or marking absent VAT as a mismatch", () => {
+    const report = parsePastedMonthlyReport("Date\tSystem inv no.\tInvoice no.\tCustomer name\tJobID\tInvoice type\tAmt\tStatus\n01 Oct 2026\t4974\t7001000\tExample Customer\t4176\tRemoval\t£690.00\tPAID");
+    const options = { sourceLabel: "pasted report", compareVat: false };
+    const result = reconcileTransactionsWithPdf([transaction({ invoice_number: "4974", amount: 575, vat_amount: 115 })], report, options);
+    expect(result.transactions[0]).toMatchObject({ customer_name: "Example Customer", invoice_number: "4974", vat_amount: 115 });
+    expect(result.reconciliation[0]).toMatchObject({ status: "matched", csv_amount: 690, pdf_amount: 690, csv_vat: 115, pdf_vat: null, vat_checked: false, warnings: [] });
+    const mismatch = reconcileTransactionsWithPdf([transaction({ invoice_number: "4974", amount: 574, vat_amount: 115 })], report, options);
+    expect(mismatch.reconciliation[0].status).toBe("amount_mismatch");
+    const incompleteCsv = reconcileTransactionsWithPdf([transaction({ invoice_number: "4974", amount: 575, vat_amount: null })], report, options);
+    expect(incompleteCsv.reconciliation[0].status).toBe("amount_mismatch");
+  });
+
   it("enriches matched CSV rows with PDF customer and service details", () => {
     const result = reconcileTransactionsWithPdf(
       [

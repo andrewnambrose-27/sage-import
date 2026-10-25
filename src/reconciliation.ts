@@ -10,6 +10,7 @@ export type ReconciliationStatus =
   | "needs_review";
 
 export interface ReconciliationRow {
+  vat_checked?: boolean;
   invoice_number: string;
   status: ReconciliationStatus;
   customer_name: string | null;
@@ -32,7 +33,11 @@ const moneyTolerance = 0.01;
 export function reconcileTransactionsWithPdf(
   transactions: NormalizedTransaction[],
   pdfRows: MonthlyInvoiceReportRow[],
+  options: { sourceLabel?: string; compareVat?: boolean } = {},
 ): ReconciliationResult {
+  const sourceLabel = options.sourceLabel ?? "PDF";
+  const reportName = sourceLabel === "PDF" ? "monthly PDF report" : "pasted monthly report";
+  const compareVat = options.compareVat !== false;
   const activePdfRows = pdfRows.filter((row) => !row.excluded);
   const pdfByInvoice = new Map(activePdfRows.map((row) => [row.invoice_number, row]));
   const csvByInvoice = groupCsvRows(transactions);
@@ -43,7 +48,7 @@ export function reconcileTransactionsWithPdf(
       return {
         ...transaction,
         pdf_match_status: "needs_review",
-        warnings: [...transaction.warnings, "Cannot match PDF row without an invoice number."],
+        warnings: [...transaction.warnings, `Cannot match ${sourceLabel} row without an invoice number.`],
       };
     }
 
@@ -52,7 +57,7 @@ export function reconcileTransactionsWithPdf(
       return {
         ...transaction,
         pdf_match_status: "missing_from_pdf",
-        warnings: [...transaction.warnings, "No matching monthly PDF row."],
+        warnings: [...transaction.warnings, sourceLabel === "PDF" ? "No matching monthly PDF row." : `No matching ${reportName} row.`],
       };
     }
 
@@ -62,7 +67,7 @@ export function reconcileTransactionsWithPdf(
       service_type: pdfRow.service_type || undefined,
       pdf_match_status: pdfRow.warnings.length > 0 ? "needs_review" : "matched",
       warnings: pdfRow.warnings.length > 0
-        ? [...transaction.warnings, ...pdfRow.warnings.map((warning) => `PDF: ${warning}`)]
+        ? [...transaction.warnings, ...pdfRow.warnings.map((warning) => `${sourceLabel}: ${warning}`)]
         : transaction.warnings,
     };
   });
@@ -74,6 +79,7 @@ export function reconcileTransactionsWithPdf(
 
     if (!pdfRow) {
       reconciliation.push({
+        vat_checked: compareVat,
         invoice_number: invoiceNumber,
         status: "missing_from_pdf",
         customer_name: null,
@@ -82,7 +88,7 @@ export function reconcileTransactionsWithPdf(
         pdf_amount: null,
         csv_vat: csvVat,
         pdf_vat: null,
-        warnings: ["CSV invoice was not found in the monthly PDF report."],
+        warnings: [`CSV invoice was not found in the ${reportName}.`],
       });
       continue;
     }
@@ -90,20 +96,21 @@ export function reconcileTransactionsWithPdf(
     const warnings = [
       ...new Set([
         ...csvRows.flatMap((row) => row.warnings),
-        ...pdfRow.warnings.map((warning) => `PDF: ${warning}`),
+        ...pdfRow.warnings.map((warning) => `${sourceLabel}: ${warning}`),
       ]),
     ];
 
     const amountMismatch = !moneyMatches(csvAmount, pdfRow.invoice_total);
-    const vatMismatch = !moneyMatches(csvVat, pdfRow.vat_amount);
+    const vatMismatch = compareVat && !moneyMatches(csvVat, pdfRow.vat_amount);
     if (amountMismatch) {
-      warnings.push("CSV amount does not match PDF invoice total.");
+      warnings.push(`CSV amount does not match ${sourceLabel} invoice total.`);
     }
     if (vatMismatch) {
-      warnings.push("CSV VAT does not match PDF VAT.");
+      warnings.push(`CSV VAT does not match ${sourceLabel} VAT.`);
     }
 
     reconciliation.push({
+      vat_checked: compareVat,
       invoice_number: invoiceNumber,
       status: statusFor({ amountMismatch, vatMismatch, warnings }),
       customer_name: pdfRow.customer_name || null,
@@ -122,6 +129,7 @@ export function reconcileTransactionsWithPdf(
     }
 
     reconciliation.push({
+      vat_checked: compareVat,
       invoice_number: pdfRow.invoice_number,
       status: "missing_from_csv",
       customer_name: pdfRow.customer_name || null,
@@ -130,7 +138,7 @@ export function reconcileTransactionsWithPdf(
       pdf_amount: pdfRow.invoice_total,
       csv_vat: null,
       pdf_vat: pdfRow.vat_amount,
-      warnings: ["PDF invoice was not found in the uploaded CSV rows.", ...pdfRow.warnings],
+      warnings: [`${sourceLabel} invoice was not found in the uploaded CSV rows.`, ...pdfRow.warnings],
     });
   }
 

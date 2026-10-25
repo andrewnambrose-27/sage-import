@@ -21,6 +21,13 @@ describe("conversion workflow status from application state", () => {
   it("allows successful optional PDF-only checks without claiming invoice processing is complete", () => {
     expect(statuses({ ...initial, fileCount: 1, checkState: "passed", filesCurrent: true })).toEqual(["completed", "ready", "not-started", "not-started", "not-started"]);
   });
+  it("counts a pasted report as a source and requires a CSV before invoice processing", () => {
+    const snapshot = { ...initial, fileCount: 1, hasPastedReport: true, checkState: "passed" as const, filesCurrent: true };
+    expect(statuses(snapshot)).toEqual(["completed", "ready", "not-started", "not-started", "not-started"]);
+    expect(deriveWorkflow(snapshot)[0].summary).toBe("1 source added and checked.");
+    expect(deriveWorkflow(snapshot)[1].summary).toContain("Add a CSV export");
+    expect(statuses({ ...parsed, hasPastedReport: true, filesCurrent: false })[1]).toBe("attention");
+  });
   it("requires actual parsed rows and reports unresolved checks separately from successful upload checks", () => {
     expect(statuses(parsed)).toEqual(["completed", "completed", "ready", "not-started", "not-started"]);
     expect(statuses({ ...parsed, importAttention: 3, reviewAttention: 2 })).toEqual(["completed", "attention", "attention", "not-started", "not-started"]);

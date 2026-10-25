@@ -15,6 +15,9 @@ describe("production Pages browser assets", () => {
     const context = { waitUntil() {}, passThroughOnException() {} };
     const app = await (await worker.fetch(new Request("https://example.test/assets/app.js"), {}, context)).text();
     const help = await (await worker.fetch(new Request("https://example.test/assets/help.js"), {}, context)).text();
+    const clipboardSource = app.slice(0, app.indexOf("const connectionIndicator ="));
+    const clipboardText = runInNewContext(clipboardSource + '; monthlyReportTableText([["4974", "", "Example\\nCustomer"]]);');
+    expect(clipboardText).toBe("4974\t\tExample Customer");
     const workflowSource = app.slice(app.indexOf("const deriveWorkflow ="), app.indexOf("const workflowHasBlockingWarning ="));
     // Parsing alone missed the original __name ReferenceError: actually execute the function.
     const states = runInNewContext(workflowSource + '; deriveWorkflow({ fileCount: 0, rowCount: 0, checkState: "idle", draftState: "no_invoices_selected" });');

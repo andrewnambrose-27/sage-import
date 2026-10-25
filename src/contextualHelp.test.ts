@@ -30,9 +30,9 @@ describe("contextual Help buttons", () => {
   });
 
   it("provides default and custom descriptions without allowing HTML injection", () => {
-    expect(renderHelpInfo("supporting-pdf-reports")).toContain("Read Export your Monthly Invoice Report (PDF).");
+    expect(renderHelpInfo("supporting-pdf-reports")).toContain("Read Copy or export your Monthly Invoice Report.");
     const html = renderHelpInfo("supporting-pdf-reports", { id: "custom-help", label: "Monthly report", tooltip: '<img src="x" onerror="alert(1)">' });
-    expect(html).toContain('aria-label="Help for Monthly report: Export your Monthly Invoice Report (PDF)"');
+    expect(html).toContain('aria-label="Help for Monthly report: Copy or export your Monthly Invoice Report"');
     expect(html).not.toContain('<img src="x"');
     expect(html).toContain("&lt;img");
   });

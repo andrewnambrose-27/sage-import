@@ -11,6 +11,7 @@ export const workflowSteps = [
 export type WorkflowStatus = "not-started" | "ready" | "in-progress" | "attention" | "completed";
 export interface WorkflowSnapshot {
   fileCount: number;
+  hasPastedReport?: boolean;
   invalidFiles: number;
   checkState: "idle" | "checking" | "passed" | "failed";
   filesCurrent: boolean;
@@ -49,15 +50,15 @@ export function deriveWorkflow(snapshot: WorkflowSnapshot): WorkflowStepState[] 
     { status: "not-started", summary: "Save your reviewed batch first." },
     { status: "not-started", summary: "Not started." },
   ];
-  if (s.fileCount) states[0] = { status: "in-progress", summary: count(s.fileCount, "file") + " ready to check." };
+  if (s.fileCount) states[0] = { status: "in-progress", summary: count(s.fileCount, s.hasPastedReport ? "source" : "file") + " ready to check." };
   if (s.invalidFiles) states[0] = { status: "attention", summary: count(s.invalidFiles, "file") + " need" + (s.invalidFiles === 1 ? "s" : "") + " checking." };
   else if (s.checkState === "checking") states[0] = { status: "in-progress", summary: "Checking uploaded files…" };
   else if (s.checkState === "failed") states[0] = { status: "attention", summary: "File checks did not finish successfully. View the check results." };
-  else if (checked) states[0] = { status: "completed", summary: count(s.fileCount, "file") + " uploaded and checked." };
+  else if (checked) states[0] = { status: "completed", summary: count(s.fileCount, s.hasPastedReport ? "source" : "file") + (s.hasPastedReport ? " added and checked." : " uploaded and checked.") };
 
   if (checked) states[1] = s.rowCount
     ? { status: s.importAttention ? "attention" : "completed", summary: count(s.rowCount, "row") + " parsed · " + (s.importAttention ? attention(s.importAttention) : "No unresolved import checks.") }
-    : { status: "ready", summary: "PDF checks finished. Add a CSV export to read invoice rows." };
+    : { status: "ready", summary: s.hasPastedReport ? "Monthly report checked. Add a CSV export to compare invoice rows." : "PDF checks finished. Add a CSV export to read invoice rows." };
   else if (s.checkState === "failed") states[1] = { status: "attention", summary: "File check results need attention." };
 
   if (imported) {

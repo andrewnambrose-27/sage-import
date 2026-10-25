@@ -19,7 +19,7 @@ export const contextualHelp = {
   "removal-deposits": { guideId: "before-you-start", label: "Removal deposits CSV", tooltip: "Check which deposit files the tool can use." },
   "ad-hoc-invoices": { guideId: "before-you-start", label: "Ad Hoc invoices CSV", tooltip: "Check which additional invoice files to include." },
   "credit-notes": { guideId: "before-you-start", label: "Credit notes CSV", tooltip: "Learn how credit note files are used during review." },
-  "monthly-report": { guideId: "supporting-pdf-reports", label: "Monthly invoice report PDF", tooltip: "Learn how to export this report from Removals Manager." },
+  "monthly-report": { guideId: "supporting-pdf-reports", label: "Monthly invoice report", tooltip: "Learn how to copy this report from Removals Manager or upload its PDF." },
   "individual-invoices": { guideId: "before-you-start", label: "Individual invoice PDFs", tooltip: "Check what individual invoice PDFs can be used for." },
   "import-step": { guideId: "check-import-reconciliation", label: "Check the import", tooltip: "Understand import results, totals and warnings." },
   "reconciliation": { guideId: "check-import-reconciliation", label: "Reconciliation", tooltip: "Understand invoice differences and how to resolve them." },

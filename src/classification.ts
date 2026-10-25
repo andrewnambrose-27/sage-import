@@ -50,12 +50,12 @@ export function classifyTransactions(
 
     if (reconciliationRow?.status === "amount_mismatch") {
       candidates.add("amount_mismatch");
-      reasons.push("CSV amount does not match the monthly PDF report.");
+      reasons.push("CSV amount does not match the monthly invoice report.");
     }
 
     if (reconciliationRow?.status === "vat_mismatch") {
       candidates.add("vat_mismatch");
-      reasons.push("CSV VAT does not match the monthly PDF report.");
+      reasons.push("CSV VAT does not match the monthly invoice report.");
     }
 
     if (transaction.warnings.length > 0 || reconciliationRow?.status === "needs_review") {
@@ -65,7 +65,7 @@ export function classifyTransactions(
 
     if (!transaction.customer_name) {
       candidates.add("missing_customer");
-      reasons.push("No customer name matched from the monthly PDF report.");
+      reasons.push("No customer name matched from the monthly invoice report.");
     }
 
     if (transaction.transaction_type === "deposit") {
