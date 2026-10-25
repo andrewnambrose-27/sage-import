@@ -14,11 +14,10 @@ export class CustomerListError extends Error {}
 export interface CustomerListResult {
   customers: CustomerListRecord[];
   skipped_empty_rows: number;
+  literal_address_quotes: number;
 }
 
-/** Customer exports are reference data, never invoice rows or automatic Sage writes. */
-export function parseCustomerListCsv(text: string): CustomerListResult {
-  const source = text.replace(/^\uFEFF/, "");
+function validateCustomerCsvQuotes(source: string): void {
   let quoted = false;
   let fieldStart = true;
   let closedQuote = false;
@@ -38,6 +37,56 @@ export function parseCustomerListCsv(text: string): CustomerListResult {
     }
   }
   if (quoted) throw new CustomerListError("The customer CSV has an unfinished quoted field. Export the complete list as CSV again and retry.");
+}
+
+/** Preserve malformed literal quotes only in the known, final address columns. */
+function prepareCustomerAddressQuotes(source: string): { source: string; literalAddressQuotes: number } {
+  try {
+    validateCustomerCsvQuotes(source);
+    return { source, literalAddressQuotes: 0 };
+  } catch (error) {
+    if (!(error instanceof CustomerListError)) throw error;
+  }
+  const lines = source.split("\n");
+  const headings = (parseCsvRows(lines[0])[0] ?? []).map(cell => cell.trim().toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const addressColumn = headings.indexOf("address");
+  if (headings[0] !== "jobid" || addressColumn < 0 || headings.slice(addressColumn + 1).some(Boolean)) return { source, literalAddressQuotes: 0 };
+  let literalAddressQuotes = 0;
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
+    const line = rawLine.replace(/\r$/, "");
+    if (!/^\s*\d+\s*,/.test(line) || !line.includes('"')) continue;
+    let column = 0;
+    let quoted = false;
+    let addressStart = -1;
+    for (let index = 0; index < line.length; index += 1) {
+      if (line[index] === '"' && quoted && line[index + 1] === '"') index += 1;
+      else if (line[index] === '"') quoted = !quoted;
+      else if (line[index] === "," && !quoted && ++column === addressColumn) { addressStart = index + 1; break; }
+    }
+    if (addressStart === -1) continue;
+    const address = line.slice(addressStart);
+    try { validateCustomerCsvQuotes(address); continue; } catch (error) {
+      if (!(error instanceof CustomerListError)) throw error;
+    }
+    // A genuine quoted multiline address continues on a non-record line. Leave it
+    // to the strict CSV reader; never consume the next customer's row as an address.
+    let nextIndex = lineIndex + 1;
+    while (nextIndex < lines.length && !lines[nextIndex].trim()) nextIndex += 1;
+    const nextLine = lines[nextIndex];
+    if (nextLine && !/^\s*\d+\s*,/.test(nextLine)) continue;
+    const literalAddress = address.split(",").map(part => part.trim()).filter(Boolean).join(", ");
+    lines[lineIndex] = line.slice(0, addressStart) + '"' + literalAddress.replace(/"/g, '""') + '"' + (rawLine.endsWith("\r") ? "\r" : "");
+    literalAddressQuotes += 1;
+  }
+  return { source: lines.join("\n"), literalAddressQuotes };
+}
+
+/** Customer exports are reference data, never invoice rows or automatic Sage writes. */
+export function parseCustomerListCsv(text: string): CustomerListResult {
+  const prepared = prepareCustomerAddressQuotes(text.replace(/^\uFEFF/, ""));
+  const source = prepared.source;
+  validateCustomerCsvQuotes(source);
 
   const rows = parseCsvRows(source).filter(row => row.some(cell => cell.trim()));
   const headings = (rows.shift() ?? []).map(cell => cell.trim().toLowerCase().replace(/[^a-z0-9]/g, ""));
@@ -67,5 +116,5 @@ export function parseCustomerListCsv(text: string): CustomerListResult {
     customers.push({ job_id: jobId, customer_name: name, telephone, mobile, email, address });
   }
   if (!customers.length) throw new CustomerListError("No named customer records were found in this CSV.");
-  return { customers, skipped_empty_rows: skipped };
+  return { customers, skipped_empty_rows: skipped, literal_address_quotes: prepared.literalAddressQuotes };
 }

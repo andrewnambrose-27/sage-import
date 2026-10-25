@@ -27,6 +27,27 @@ describe("customer list CSV", () => {
     const result = parseCustomerListCsv(header + '\n1300,Example Customer,,,,12, Example Road, Example Town,AB1 2CD');
     expect(result.customers[0].address).toBe("12, Example Road, Example Town, AB1 2CD");
   });
+  it("preserves a literal unmatched house-name quote without swallowing the next customer", () => {
+    const brokenAddress = '1300,Example Customer,01150000000,07400000000,example@example.test,"The Example House\' 12 Example Road,,,.';
+    const nextCustomer = '1301,Next Customer,,,,Other address,,,';
+    const result = parseCustomerListCsv(header + '\r\n' + brokenAddress + '\r\n' + nextCustomer);
+    expect(result.customers).toHaveLength(2);
+    expect(result.customers[0].address).toBe('"The Example House\' 12 Example Road, .');
+    expect(result.customers[1].job_id).toBe("1301");
+    expect(result.literal_address_quotes).toBe(1);
+  });
+  it("keeps bare address quotes as text while still rejecting broken customer-name fields", () => {
+    const result = parseCustomerListCsv(header + '\n1300,Example Customer,,,,12 "Example" Road,,,');
+    expect(result.customers[0].address).toBe('12 "Example" Road');
+    expect(result.literal_address_quotes).toBe(1);
+    expect(() => parseCustomerListCsv(header + '\n1300,"Broken customer,,,,Address,,,\n1301,Next Customer,,,,Other address,,,')).toThrow();
+  });
+  it("leaves valid quoted multiline addresses untouched, including numeric continuation lines", () => {
+    const result = parseCustomerListCsv(header + '\n1300,Example Customer,,,,"Example Road\n123, Example Town, Example County,AB1 2CD",,,\n1301,Next Customer,,,,Other address,,,');
+    expect(result.customers).toHaveLength(2);
+    expect(result.customers[0].address).toBe('Example Road\n123, Example Town, Example County,AB1 2CD');
+    expect(result.literal_address_quotes).toBe(0);
+  });
 
   it("reads a full 3,000-customer export", () => {
     const rows = Array.from({ length: 3000 }, (_, index) => `${index + 1300},Example ${index},01150000000,07400000000,customer${index}@example.test,Example address,,,`);

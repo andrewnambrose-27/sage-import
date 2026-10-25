@@ -70,7 +70,7 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261025-3";
+const APP_ASSET_VERSION = "20261025-4";
 const BRAND_LOGO_PATH = "/Removals%20Manager%20to%20Sage%20logo.png";
 const faviconLinks = `
     <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg">
@@ -4544,8 +4544,9 @@ function showCustomerListResult(result) {
   customerListSearch.value = "";
   renderCustomerListPreview();
   if (!result) return "";
-  const message = uploadedCustomers.length + " customer" + plural(uploadedCustomers.length) + " read" +
-    (result.skipped_empty_rows ? "; " + result.skipped_empty_rows + " empty customer entr" + (result.skipped_empty_rows === 1 ? "y" : "ies") + " skipped" : "") + ".";
+  const message = result.file_name + ": " + uploadedCustomers.length + " customer" + plural(uploadedCustomers.length) + " read" +
+    (result.skipped_empty_rows ? "; " + result.skipped_empty_rows + " empty customer entr" + (result.skipped_empty_rows === 1 ? "y" : "ies") + " skipped" : "") + "." +
+    (result.literal_address_quotes ? " " + result.literal_address_quotes + " address entr" + (result.literal_address_quotes === 1 ? "y has" : "ies have") + " quotation marks kept as supplied." : "");
   setFieldMessage("customerList", message, "success");
   return message;
 }
@@ -5029,7 +5030,8 @@ checkButton.addEventListener("click", async () => {
   const failedItems = selectedItems.filter((item) => !item.passed);
 
   const hasPastedReport = Boolean(pastedMonthlyReport.value.trim());
-  const hasCustomerList = getFiles(uploadSlots.find(item => item.id === "customerList")).length > 0;
+  const selectedCustomerFile = getFiles(uploadSlots.find(item => item.id === "customerList"))[0];
+  const hasCustomerList = Boolean(selectedCustomerFile);
   clearButton.disabled = selectedItems.length === 0 && !hasPastedReport;
 
   try {
@@ -5098,7 +5100,8 @@ checkButton.addEventListener("click", async () => {
     renderReconciliationEmpty("Check the report and files before reconciliation.");
     if (error.field === "customerList") {
       resetCustomerListPreview();
-      setFieldMessage("customerList", error.message, "error");
+      const fileName = selectedCustomerFile?.name || "Customer CSV";
+      setFieldMessage("customerList", fileName + ": " + error.message, "error");
     } else if (hasPastedReport) {
       pastedReportMessage.textContent = error.message || "The pasted report could not be read.";
       pastedReportMessage.className = "field-message error";
@@ -5159,7 +5162,7 @@ function updateFieldMessage(slot) {
   if (invalidCount > 0) {
     setFieldMessage(slot.id, invalidCount + " selected file" + plural(invalidCount) + " need" + (invalidCount === 1 ? "s" : "") + " attention.", "error");
   } else {
-    setFieldMessage(slot.id, files.length + " file" + plural(files.length) + " ready to check.", "success");
+    setFieldMessage(slot.id, slot.id === "customerList" ? files[0].name + " ready to check." : files.length + " file" + plural(files.length) + " ready to check.", "success");
   }
 }
 
