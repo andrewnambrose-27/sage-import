@@ -2220,6 +2220,10 @@ function uploadPage(): string {
         </div>
       </main>
 
+      <footer class="app-footer">
+        <p>Removals Manager to Sage &bull; Developed by <a href="https://justymedia.co.uk/" target="_blank" rel="noopener noreferrer">Justy Media</a></p>
+      </footer>
+
       ${renderHelpCentre()}
       <script src="/assets/help.js?v=${APP_ASSET_VERSION}" defer></script>
       <script src="/assets/app.js?v=${APP_ASSET_VERSION}" defer></script>
@@ -2575,6 +2579,29 @@ h2 {
 .dashboard-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 28px auto 56px;
+}
+
+.app-footer {
+  border-top: 1px solid var(--line);
+  padding: 24px 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.app-footer p {
+  margin: 0;
+}
+
+.app-footer a {
+  color: #4d595c;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.app-footer a:hover {
+  text-decoration: underline;
 }
 
 .hero-panel,
