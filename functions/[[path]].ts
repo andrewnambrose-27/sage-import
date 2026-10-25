@@ -68,7 +68,25 @@ const SAGE_CONNECTION_ACCESS_COOKIE = "sage_connection_access";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const SAGE_STATE_TTL_SECONDS = 10 * 60;
 const SAGE_CONNECTION_ACCESS_TTL_SECONDS = 5 * 60;
-const APP_ASSET_VERSION = "20261019-4";
+const APP_ASSET_VERSION = "20261025-1";
+const BRAND_LOGO_PATH = "/Removals%20Manager%20to%20Sage%20logo.png";
+const faviconLinks = `
+    <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg">
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon/favicon-96x96.png">
+    <link rel="shortcut icon" href="/favicon/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png">
+    <link rel="manifest" href="/favicon/site.webmanifest">
+    <meta name="theme-color" content="#0c7369">`;
+const publicBrandAssets = new Set([
+  BRAND_LOGO_PATH,
+  "/favicon/favicon.svg",
+  "/favicon/favicon-96x96.png",
+  "/favicon/favicon.ico",
+  "/favicon/apple-touch-icon.png",
+  "/favicon/site.webmanifest",
+  "/favicon/web-app-manifest-192x192.png",
+  "/favicon/web-app-manifest-512x512.png",
+]);
 const encoder = new TextEncoder();
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -76,6 +94,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   try {
     const url = new URL(request.url);
+
+    if ((request.method === "GET" || request.method === "HEAD") && publicBrandAssets.has(url.pathname)) {
+      return context.next();
+    }
 
       if (url.pathname === "/assets/styles.css") {
         return textResponse(stylesCss, "text/css; charset=utf-8");
@@ -1660,6 +1682,7 @@ function liveCheckPage(): string {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sage Import Live Check</title>
+    ${faviconLinks}
     <style>
       :root {
         color-scheme: light;
@@ -1740,10 +1763,7 @@ function uploadPage(): string {
     "Upload files",
     `
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Removals Manager to Sage</p>
-          <h1>Sage Import Checker</h1>
-        </div>
+        <h1 class="site-brand"><img class="header-logo" src="${BRAND_LOGO_PATH}" width="2172" height="724" alt="Removals Manager to Sage"></h1>
         <div class="topbar-actions">
           <button id="sageConnectionIndicator" class="sage-connection-indicator" type="button" data-state="checking" popovertarget="sageConnectionPopover" aria-haspopup="dialog" aria-controls="sageConnectionPopover" aria-expanded="false" aria-label="Checking connection. Open Sage connection details and controls."><span class="sage-connection-symbol" aria-hidden="true"></span><span data-sage-connection-label role="status">Checking connection</span></button>
           <div id="sageConnectionPopover" class="sage-connection-popover" popover="auto" role="dialog" aria-labelledby="sage-title">
@@ -2223,6 +2243,7 @@ function layout(title: string, body: string, bodyClass = ""): string {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(title)} | Sage Import Checker</title>
+    ${faviconLinks}
     <link rel="stylesheet" href="/assets/styles.css?v=${APP_ASSET_VERSION}">
   </head>
   <body class="${escapeHtml(bodyClass)}">
@@ -2420,6 +2441,20 @@ h2 {
 .topbar h1 {
   margin-bottom: 0;
   font-size: 1.35rem;
+}
+
+.site-brand {
+  width: min(280px, 100%);
+  line-height: 0;
+}
+
+.header-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Trim the supplied logo's transparent vertical padding in the header. */
+  aspect-ratio: 2172 / 450;
+  object-fit: cover;
 }
 
 .topbar-actions {
